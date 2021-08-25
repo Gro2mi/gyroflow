@@ -243,8 +243,7 @@ class Stabilizer:
     def set_smoothing_algo(self, algo = None):
         if not algo:
             algo = smoothing_algos.PlainSlerp() # Default
-        else:
-            self.smoothing_algo = algo
+        self.smoothing_algo = algo
 
     def update_smoothing(self):
 
@@ -535,7 +534,7 @@ class Stabilizer:
         return True
 
 
-    def full_auto_sync(self, max_fitting_error = 0.02, debug_plots=True):
+    def full_auto_sync(self, max_fitting_error = 0.02, num_frames_analyze=30, debug_plots=True):
 
         if self.use_gyroflow_data_file:
             self.update_smoothing()
@@ -547,7 +546,6 @@ class Stabilizer:
         
 
         syncpoints = [] # save where to analyze. list of [frameindex, num_analysis_frames]
-        num_frames_analyze = 30
         
         max_sync_cost = max_sync_cost_tot / 30 * num_frames_analyze
         num_frames_offset = int(num_frames_analyze / 2)
@@ -615,10 +613,9 @@ class Stabilizer:
 
         if success:
             print("Auto sync complete")
-            return True
         else:
             print("Auto sync failed to converge. Sorry about that")
-            return False
+        return success
 
 
     def plot_sync(self, corrected_times, slicelength, show=False):
