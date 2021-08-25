@@ -1,9 +1,12 @@
 import argparse
+import os
+
 import gyroflow
 import gyrolog
 import logging
 import sys
 import stabilizer
+import smoothing_algos
 
 # python .\gyroflow_cli.py "D:\git\FPV\videos\GH011173.MP4" "camera_presets\GoPro\GoPro_Hero6_2160p_43.json"
 
@@ -23,16 +26,32 @@ parser.add_argument('-mfe', '--max_fitting_error', type=float, default=0.02)
 parser.add_argument('-s', '--start', type=float, default=0)
 parser.add_argument('-e', '--end', type=float, default=5)
 parser.add_argument('-o', '--outfile', type=str)
+parser.add_argument('-ngfd', '--no_gyroflow_data', action='store_true')
+parser.add_argument('-a', '--algo')
 
 if __name__=='__main__':
     # Append additional arguments to sys.argv
     # TODO remove line that is for dev purposes only
-    sys.argv = sys.argv + [r"D:\git\FPV\videos\GH011162.MP4", r"camera_presets\GoPro\GoPro_Hero6_2160p_43.json", '-s', '15', '-e', '20']
+    sys.argv = sys.argv + [r"D:\git\FPV\videos\GH011162.MP4",
+                           r"camera_presets\GoPro\GoPro_Hero6_2160p_43.json",
+                           '-s', '15',
+                           '-e', '20',
+                           '-ngfd',
+                           '-a', '2']
     # sys.argv = sys.argv + [r"GH011172.MP4", r"camera_presets\GoPro\GoPro_Hero6_2160p_43.json"]
     args = parser.parse_args()
     if args.outfile is None:
-        '.'.join(args.video.split('.')[:-1]) + '_gyroflow.' + args.video.split('.')[-1]
+        args.outfile = '.'.join(args.video.split('.')[:-1]) + '_gyroflow.' + args.video.split('.')[-1]
 
+    algo_instances = smoothing_algos.get_all_stab_algo_instances()
+    try:
+        args.algo = int(args.algo)
+    except ValueError:
+        logging.warning("Invalid algo argument. Using default algo.")
+        args.algo = None
+
+    if args.algo is not None:
+        args.algo = algo_instances[int(args.algo)]
     logging.info(f"{'Argument':<10s}:    Value")
     for arg in vars(args):
         logging.info(f"{arg:<20s}:    {getattr(args, arg)}")
@@ -45,18 +64,31 @@ if __name__=='__main__':
 
     if args.log is None:
         gyroflow_data_path = stabilizer.find_gyroflow_data_file(args.video)
-        if gyroflow_data_path:
+        if gyroflow_data_path and not args.no_gyroflow_data:
             logging.info("Using .gyroflow file")
             stab = stabilizer.Stabilizer(args.video, gyroflow_file=gyroflow_data_path)
-            # stab.renderfile(starttime=args.start, stoptime=args.end)
+            stab.set_smoothing_algo()
+            stab.update_smoothing()
 
         elif log_type == "GoPro GPMF metadata":
             stab = stabilizer.GPMFStabilizer(args.video, args.lens, args.video, hero=variant.replace('hero', ''), fov_scale=args.field_of_view, gyro_lpf_cutoff=args.low_pass_filter)
 
-            stab.set_smoothing_algo()
+            stab.set_smoothing_algo(args.algo)
             stab.update_smoothing()
-            if not stab.full_auto_sync(args.max_fitting_error, num_frames_analyze=10, debug_plots=False):
+            if not stab.full_auto_sync(args.max_fitting_error, debug_plots=False):
                 logging.error("Couldn't auto sync")
                 sys.exit()
-            logging.info(f"Save stabilized video as '{args.outfile}'")
-            stab.renderfile(starttime=args.start, stoptime=args.end)
+        elif log_type == "Runcam CSV log":
+            logging.info("Log type not implemented yet")
+        elif log_type == "Insta360 IMU metadata":
+            logging.info("Log type not implemented yet")
+        elif log_type == "Blackbox raw file":
+            logging.info("Log type not implemented yet")
+        elif log_type == "Blackbox CSV file":
+            logging.info("Log type not implemented yet")
+
+
+
+        logging.info(f"Save stabilized video as '{args.outfile}'")
+        stab.renderfile(starttime=args.start, stoptime=args.end, outpath=args.outfile)
+        os.startfile(args.outfile)
