@@ -87,8 +87,8 @@ if __name__=='__main__':
         elif log_type == "Blackbox CSV file":
             logging.info("Log type not implemented yet")
 
-
-
+        logging.ingo("Export gyroflow file.")
+        stab.export_gyroflow_file()
         logging.info(f"Save stabilized video as '{args.outfile}'")
         stab.renderfile(starttime=args.start, stoptime=args.end, outpath=args.outfile)
         os.startfile(args.outfile)
