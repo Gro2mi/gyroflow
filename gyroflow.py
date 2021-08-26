@@ -31,6 +31,7 @@ try:
 except:
     pass
 
+
 # https://en.wikipedia.org/wiki/List_of_digital_camera_brands
 cam_company_list = ["GoPro", "Runcam", "Insta360", "Caddx", "Foxeer", "DJI", "RED", "Canon", "Arri",
                     "Blackmagic", "Casio", "Nikon", "Panasonic", "Sony", "Jvc", "Olympus", "Fujifilm",
@@ -313,8 +314,9 @@ class VideoPlayer(QtWidgets.QLabel):
         self.setFrameStyle(QtWidgets.QFrame.StyledPanel)
         self.pixmap = QtGui.QPixmap(img)
         #self.setPixmap(self.pixmap)
+        self.setMinimumSize(1,1)
 
-        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
 
     def paintEvent(self, event = None):
@@ -2329,6 +2331,7 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
     def reset_stab(self):
         #print("Reset stabilization class")
         if type(self.stab) != type(None):
+            self.multiSyncUI.UI_reset()
             self.stab.release()
             self.stab = None
 
@@ -2595,8 +2598,10 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
     #    print("Finished computing")
 
     def update_smoothness(self):
+        print("Updating smoothness setting...")
         self.stab.set_smoothing_algo(self.stab_algo_instance_current)
         self.stab.update_smoothing()
+        print("Smoothness updated")
 
 
     def export_keyframes(self):
@@ -2946,6 +2951,7 @@ class StabUtility(StabUtilityBarebone):
     #    #print(self.video_viewer.get_current_timestamp())
 
     def add_sync_here(self):
+        self.video_viewer.stop()
         timestamp = self.video_viewer.get_current_timestamp()
         self.add_sync_at_time(timestamp)
         
