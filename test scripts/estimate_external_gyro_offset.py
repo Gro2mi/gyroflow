@@ -5,13 +5,18 @@ import pandas as pd
 from tqdm import tqdm
 import stabilizer
 import time
+from scipy.signal import savgol_filter
 import gyrolog
 
-# video = r'D:\Cloud\git\FPV\videos\GH011144.MP4'
-video = r'D:\Cloud\git\FPV\videos\external_gyro_-15offset\P1077044.MP4'
-gyro = r'D:\Cloud\git\FPV\videos\external_gyro_-15offset\LOG00001.BFL.csv'
-cam_preset = r'D:\Cloud\git\FPV\videos\external_gyro_-15offset\Gh5+8mm-108025fps.json'
+video = r'D:\Cloud\git\FPV\videos\GH011144.MP4'
+gyro = r'D:\Cloud\git\FPV\videos\GH011144.MP4'
+cam_preset = 'camera_presets/GoPro/GoPro_Hero6_2160p_43.json'
 
+# video = r'D:\Cloud\git\FPV\videos\external_gyro_-15offset\P1077044.MP4'
+# gyro = r'D:\Cloud\git\FPV\videos\external_gyro_-15offset\LOG00001.BFL.csv'
+# cam_preset = r'D:\Cloud\git\FPV\videos\external_gyro_-15offset\Gh5+8mm-108025fps.json'
+pd.set_option('display.max_columns', 10)
+pd.set_option("expand_frame_repr", True)
 cap = cv2.VideoCapture(video)
 
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -36,26 +41,39 @@ for i in tqdm(range(frame_count), desc=f"Analyzing frames", colour="blue"):
 
 # save data for testing and comparing
 df.to_csv("video_movement2.csv")
-df = pd.read_csv("video_movement2.csv")
 
-df["movement_rolling"] = df.movement.rolling(100, min_periods=1).mean()
-df["moving"] = df.movement_rolling > .05
-print(df.movement.mean()/4)
+cap.release()
+df = pd.read_csv("video_movement.csv")
+
+df["movement_rolling_mean"] = df.movement.rolling(30, min_periods=1).mean()
+
+df["movement_rolling_std"] = df.movement.rolling(30, min_periods=1).std()
+
+df["savgol"] = savgol_filter(df.movement, window_length =31, polyorder = 1)
+df["savgol_diff"] = savgol_filter(df.movement.diff(), window_length =151, polyorder = 1)
+df["savgol_diff"] = df.movement.diff().abs().rolling(100).sum()
+
+
+df["moving"] = df.savgol > .1
+
+# print(df.movement.mean()/4)
 print(df[df.moving.diff() == 1])
 fig, ax = plt.subplots(1, 1, sharey=True, sharex=True)
 ax.plot(df.time, df.movement, label="Movement Detection")
-ax.plot(df.time, df.movement_rolling, label="Movement Detection Rolling 15")
+ax.plot(df.time, df.movement_rolling_mean, label="Movement Detection Rolling 15")
 ax.plot(df.time, df.moving, label="Movement")
+# ax.plot(df.time, df.movement_rolling_mean)
+# # ax.plot(df.time[:-50], df.savgol_std[:-50])
+# ax.plot(df.time[:-50], df.savgol_diff[:-50])
 ax.set(title="Video Movement Analysis", xlabel="time [s]", ylabel="relative area of detected movment [-]")
 plt.legend()
 plt.show()
 td = time.time() - t
-print(td)
+print(df.describe())
+print(f"Time: {td}")
 
 # comparison to gyro data
 guessed_log, logtype, logvariant = gyrolog.guess_log_type_from_video(gyro)
 stab = stabilizer.MultiStabilizer(video, cam_preset, gyro, logtype=logtype, logvariant=logvariant)
 stab.gyro_analysis(debug_plots=True)
-
-cap.release()
-cv2.destroyAllWindows()
+# stab.full_auto_sync_parallel()
