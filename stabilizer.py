@@ -1254,49 +1254,37 @@ class Stabilizer:
 
 
         if audio:
-            time.sleep(.5)
-            ffmpeg_command = [
-                "-y",
-                "-i",
-                self.videopath,
-                "-ss",
-                str(tstart / self.fps),
-                "-to",
-                str(tend / self.fps),
-                "-vn",
-                "-acodec",
-                "copy",
-                "audio.mp4"
-            ]
-            out.execute_ffmpeg_cmd(ffmpeg_command)
-
+            time.sleep(.1)
             tmp_ext = "_audio." + outpath.split('.')[-1]
             ffmpeg_command = [
                 "-y",
+                "-an",
                 "-i",
                 outpath,
+                "-vn",
+                "-ss",
+                str(tstart / self.fps),
                 "-i",
-                "audio.mp4",
-                "-c:v",
-                "copy",
-                "-c:a",
+                self.videopath,
+                "-c",
                 "copy",
                 "-map",
                 "0:v:0",
                 "-map",
                 "1:a:0",
+                "-shortest",
                 outpath + tmp_ext,
-            ]  # `-y` parameter is to overwrite outputfile if exists
-
-            # execute FFmpeg command
+            ]
             out.execute_ffmpeg_cmd(ffmpeg_command)
             if os.path.isfile(outpath + tmp_ext):
-                os.replace(outpath + tmp_ext, outpath)
-                print("Audio exported")
+                try:
+                    os.replace(outpath + tmp_ext, outpath)
+                    print("Audio exported")
+                except Exception as e:
+                    print(e)
+                    print(f"Audio export kinda failed. You're file with audio could be named {outpath + tmp_ext}")
             else:
-                print("Failed to export audio")
-            if os.path.isfile("audio.mp4"):
-                os.remove("audio.mp4")
+                print("ffmpeg failed to export audio. Export again with detailed debug info enabled.")
 
 
     def export_gyroflow_file(self, filename=None, out_size = (1920,1080), smoothingFocus=2.0, zoom=1.0):
