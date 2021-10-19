@@ -632,6 +632,7 @@ class Stabilizer:
         # collecting gyro drift data
         if self.gyro_coefficients is not None:
             line = ",".join([self.videopath,
+                             self.calibrationfile,
                              str(self.gyro_rate),
                              str(1 - ((round(self.gyro_rate/100) * 100) / self.gyro_rate)),
                              str(self.gyro_coefficients[0]),
