@@ -579,7 +579,7 @@ class Stabilizer:
             syncpoints.append([last_index, num_frames_analyze])
 
         else:
-            first_index = round(self.trim[0] * self.fps)
+            first_index = round(max(self.trim[0] * self.fps, 3 * self.fps))
             last_index = round(self.trim[1] * self.fps) - num_frames_analyze
 
             num_syncs = max(min(round((last_index - first_index)/inter_delay_frames), max_slices), min_slices)
@@ -2354,7 +2354,7 @@ def optical_flow(
 
         succ, curr = cap.read()
         if video_rotate_code != -1:
-            prev = cv2.rotate(prev, video_rotate_code)
+            curr = cv2.rotate(curr, video_rotate_code)
 
         frame_id = (int(cap.get(cv2.CAP_PROP_POS_FRAMES)))
         frame_time = (cap.get(cv2.CAP_PROP_POS_MSEC)/1000)
@@ -2592,8 +2592,7 @@ class ParallelSync:
 
 
     def begin_sync_parallel(self):
-        n_proc = min(mp.cpu_count(), len(self.sync_points))
-        print(n_proc)
+        n_proc = min(mp.cpu_count() - 1, len(self.sync_points))
         pool = mp.Pool(n_proc)
         print("Starting parallel auto sync")
         proc_results = pool.starmap(self.optical_flow, self.sync_points)
