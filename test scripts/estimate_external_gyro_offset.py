@@ -45,23 +45,24 @@ df.to_csv("video_movement2.csv")
 cap.release()
 df = pd.read_csv("video_movement.csv")
 
-df["movement_rolling_mean"] = df.movement.rolling(30, min_periods=1).mean()
+df["movement_rolling_mean"] = df.movement.rolling(fps, min_periods=1).mean()
 
-df["movement_rolling_std"] = df.movement.rolling(30, min_periods=1).std()
+df["movement_rolling_std"] = df.movement.rolling(fps, min_periods=1).std()
 
 df["savgol"] = savgol_filter(df.movement, window_length =31, polyorder = 1)
 df["savgol_diff"] = savgol_filter(df.movement.diff(), window_length =151, polyorder = 1)
 df["savgol_diff"] = df.movement.diff().abs().rolling(100).sum()
 
+df["mmm"] = df.movement.rolling(2*fps, min_periods=1).apply(lambda x: np.sum(x < 0.001) < (0.8 * 2*fps))
 
 df["moving"] = df.savgol > .1
 
 # print(df.movement.mean()/4)
 print(df[df.moving.diff() == 1])
 fig, ax = plt.subplots(1, 1, sharey=True, sharex=True)
-ax.plot(df.time, df.movement, label="Movement Detection")
-ax.plot(df.time, df.movement_rolling_mean, label="Movement Detection Rolling 15")
-ax.plot(df.time, df.moving, label="Movement")
+ax.plot(df.time[:-fps], df.movement[:-fps], label="Movement Detection")
+# ax.plot(df.time, df.movement_rolling_mean, label="Movement Detection Rolling 15")
+ax.plot(df.time[:-fps], df.mmm[:-fps], label="Movement")
 # ax.plot(df.time, df.movement_rolling_mean)
 # # ax.plot(df.time[:-50], df.savgol_std[:-50])
 # ax.plot(df.time[:-50], df.savgol_diff[:-50])

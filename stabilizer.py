@@ -478,6 +478,7 @@ class Stabilizer:
         # self.gyro_rate the gyro data minimum is best: small movements -> roll_mean low, but changing movement df.roll_std high
         df['rating'] = df.roll_mean / df.roll_std
         df['t_roll'] = df.t.rolling(round(minimum_time * self.gyro_rate)).mean()
+        df["mmm"] = df.total.rolling(2*round(self.gyro_rate), min_periods=1).apply(lambda x: np.sum(x < 0.08) < (0.8 * 2*round(self.gyro_rate)))
 
         # threshold the gyro data
         still_mask = df.roll_mean <= still_threshold
@@ -528,6 +529,7 @@ class Stabilizer:
                     alpha=alpha)
             ax.plot(df.t_roll[flippy_mask], len(df.t[flippy_mask]) * [-.5], '.r', markersize=2, alpha=alpha * 5)
             ax.plot(df.t, df.total, 'b')
+            ax.plot(df.t, df.mmm, 'r')
             ax.set(xlabel="time [s]", ylabel="omega_total [rad/s]")
             ax.axvline(trim_start, color='orange')
             ax.axvline(trim_end, color='darkviolet')
@@ -642,7 +644,7 @@ class Stabilizer:
             file_name = "gyro_drift_offset.csv"
             if not os.path.isfile(file_name):
                 with open(file_name, 'w') as file:
-                    file.write("videopath,gyro_rate,calculated_drift,sync_drift,sync_offseet,fps\n")
+                    file.write("videopath,cam_preset,gyro_rate,calculated_drift,sync_drift,sync_offset,fps\n")
             with open(file_name, 'a') as file:
                 file.write(line + '\n')
 
@@ -2365,7 +2367,6 @@ def optical_flow(
             frame_idx.append(frame_id)
             frame_times.append(frame_time)
 
-
             curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
             if undistort.image_is_stretched():
                 curr_gray = cv2.resize(curr_gray, process_dimension)
@@ -2602,15 +2603,15 @@ if __name__ == "__main__":
     import cProfile
     import pstats
 
-    infile_path = r"D:\git\FPV\videos\GH011145.MP4"
+    infile_path = r"S:\Cloud\git\FPV\videos\GH011145.MP4"
     log_guess, log_type, variant = gyrolog.guess_log_type_from_video(infile_path)
     if not log_guess:
         print("Can't guess log")
         exit()
 
-    stab = MultiStabilizer(infile_path, r"D:\git\FPV\GoPro_Hero6_2160p_43.json", log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
+    stab = MultiStabilizer(infile_path, r"S:\Cloud\git\FPV\GoPro_Hero6_2160p_43.json", log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
 
-    stab.full_auto_sync_parallel()
+    stab.full_auto_sync_parallel(debug_plots=True)
     # stab.full_auto_sync()
 
     # cProfile.run('stab.full_auto_sync()', 'restats')
