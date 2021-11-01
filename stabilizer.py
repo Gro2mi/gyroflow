@@ -291,7 +291,6 @@ class Stabilizer:
 
 
     def multi_sync_add_slice(self, slice_frame_start, slicelength, d1, cost1, times1, transforms1, debug_plots = True):
-
         max_sync_cost_tot = 10 # > 10 is nogo.
         max_sync_cost = max_sync_cost_tot / 30 * slicelength
         if cost1 > max_sync_cost:
@@ -2599,6 +2598,41 @@ class ParallelSync:
         print("Starting parallel auto sync")
         proc_results = pool.starmap(self.optical_flow, self.sync_points)
         return proc_results
+
+class Sync:
+    def __init__(self, num_syncpoints, gyro, acc):
+        self.syncpoints = []
+        self.num_syncpoints = num_syncpoints
+        self.gyro_estimated_drift = 0
+        self.gyro_estimated_offset = 0
+        self.gyro = gyro
+        self.acc = acc
+        self.gyro_drift = 0
+        self.gyro_offset = 0
+
+
+    def get_estimated_gyro_offset_and_drift(self):
+        pass
+
+    def adjust_gyro_times(self):
+        self.gyro[:,0] = self.gyro[:, 0] * (1 + self.gyro_estimated_drift) + self.gyro_estimated_offset
+
+
+class SyncPoint:
+    def __init__(self, start, num_frames):
+        self.offset = None
+        self.error = None
+        self.rough_offset = None
+        self.better_offset = None
+        self.optical_flow = None
+        self.gyro = None
+        self.start = start
+        self.used = False
+        self.num_frames = num_frames
+        self.rating = 0
+        self.total_angular_velocity = None
+
+
 
 if __name__ == "__main__":
     import cProfile
