@@ -1287,6 +1287,7 @@ class Stabilizer:
                 outpath + tmp_ext,
             ]
             out.execute_ffmpeg_cmd(ffmpeg_command)
+            time.sleep(0.2)
             if os.path.isfile(outpath + tmp_ext):
                 try:
                     os.replace(outpath + tmp_ext, outpath)
