@@ -8,6 +8,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import cv2
 
+
 class Extractor:
     def __init__(self, videopath = "hero5.mp4"):
         self.videopath = videopath
@@ -75,7 +76,7 @@ class Extractor:
         self.num_gyro_samples = omega.shape[0]
 
 
-        self.gyro_rate = self.num_gyro_samples / self.video_length 
+        self.gyro_rate = self.num_gyro_samples / self.video_length
         #print("Gyro rate: {} Hz, should be close to 200 or 400 Hz".format(self.gyro_rate))
 
 
