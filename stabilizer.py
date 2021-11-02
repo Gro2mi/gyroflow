@@ -521,7 +521,8 @@ class Stabilizer:
             still_end_pts.append(df.time.iloc[-1])
         df_trim = pd.DataFrame(data={'start': still_start_pts, 'end': still_end_pts})
         df_trim['duration'] = df_trim.end - df_trim.start
-        print(df_trim)
+
+        # suggest longest part with movement of video as trim points
         df_trim_max_duration = df_trim.iloc[df_trim.duration.argmax()]
         trim_start = df_trim_max_duration.start
         trim_end = df_trim_max_duration.end
@@ -665,7 +666,13 @@ class Stabilizer:
         start = time.time()
 
         if max_points > 0:
-            sync_points += self.get_recommended_syncpoints(n_frames, max_points=max_points, debug_plots=debug_plots)
+            new_sync_points = self.get_recommended_syncpoints(n_frames, max_points=max_points, debug_plots=debug_plots)
+            if len(sync_points) == 0:
+                sync_points = new_sync_points
+            else:
+                for sp in new_sync_points:
+                    if sp[0] not in [s[0] for s in sync_points]:
+                        sync_points += sp
 
         # Ensure sync points are sorted by frame number (not in order if `sync_points` was set)
         sync_points.sort(key = lambda s : s[0])
