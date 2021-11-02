@@ -1087,7 +1087,11 @@ class GyroflowGyroLog(GyrologReader):
         mscale = 1
 
         with open(filename) as csvfile:
-            firstline = csvfile.readline().strip()
+            try:
+                firstline = csvfile.readline().strip()
+            # when trying to read other log variants
+            except UnicodeDecodeError:
+                return False
 
             if firstline not in self.firstlines:
                 return False
