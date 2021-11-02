@@ -214,6 +214,14 @@ class SmoothingAlgo:
             plt.legend(labels)
             plt.show()
 
+            # plot curvature
+            # fig, ax = plt.subplots()
+            # ax.set_prop_cycle(None)
+            # ax.plot(times[2:], np.diff(np.asarray(smoothed), n=2, axis=0))
+            # ax.set(title="Curvature", xlabel="Time [s]")
+            # plt.legend(labels)
+            # plt.show()
+
 
 class PlainSlerp(SmoothingAlgo):
     """Default symmetrical quaternion slerp without limits
