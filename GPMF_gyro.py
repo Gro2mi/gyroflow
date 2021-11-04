@@ -8,6 +8,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import cv2
 
+
 class Extractor:
     def __init__(self, videopath = "hero5.mp4"):
         self.videopath = videopath
@@ -31,7 +32,10 @@ class Extractor:
         self.num_gyro_samples = 0
         self.gyro_rate = 0 # gyro rate in Hz
         self.parsed_gyro = np.zeros((1,4)) # placeholder
-        self.parse_gyro()
+        self.parsed_cori = np.zeros((1,4)) # placeholder
+        self.parsed_iori = np.zeros((1,4)) # placeholder
+        self.has_cori = False
+        self.parse_gpmf()
 
         self.accl = []
 
@@ -48,9 +52,16 @@ class Extractor:
 
         video.release()
 
-    def parse_gyro(self):
+    def parse_gpmf(self):
+        cori = []
+        iori = []
+
         for frame in self.parsed:
             for stream in frame["DEVC"]["STRM"]:
+                if "CORI" in stream:
+                    cori += stream["CORI"]
+                if "IORI" in stream:
+                    iori += stream["IORI"]
                 if "GYRO" in stream:
                     #print(stream["STNM"]) # print stream name
                     self.gyro += stream["GYRO"]
@@ -64,19 +75,30 @@ class Extractor:
         omega = np.array(self.gyro) / self.gyro_scal
         self.num_gyro_samples = omega.shape[0]
 
-
-        self.gyro_rate = self.num_gyro_samples / self.video_length 
+        # gyro data gets written roughly every second
+        self.gyro_rate = self.num_gyro_samples / int(self.video_length)
         #print("Gyro rate: {} Hz, should be close to 200 or 400 Hz".format(self.gyro_rate))
-
 
         self.parsed_gyro = np.zeros((self.num_gyro_samples, 4))
         self.parsed_gyro[:,0] = np.arange(self.num_gyro_samples) * 1/self.gyro_rate
+
+        # self.gyro_rate = round(self.num_gyro_samples / self.video_length / 100) * 100
+
+        self.parsed_gyro = np.zeros((self.num_gyro_samples, 4))
+        # drift = -0.005832
+        # offset = 0.048
+        # self.parsed_gyro[:,0] = (np.arange(self.num_gyro_samples) * 1/self.gyro_rate - offset) * (1 - drift)
 
         # Data order for gopro gyro is (z,x,y)
         self.parsed_gyro[:,3] = omega[:,0] # z
         self.parsed_gyro[:,1] = omega[:,1] # x
         self.parsed_gyro[:,2] = omega[:,2] # y
-        
+
+        if len(cori) and len(iori):
+            self.parsed_cori = np.array(cori) * (1, -1, 1, 1) / 0x7fff # Seems like a signed Int16BE
+            self.parsed_iori = np.array(iori) * (1, -1, 1, 1) / 0x7fff # Seems like a signed Int16BE
+            self.has_cori = True
+
     def parse_accl(self):
         for frame in self.parsed:
             for stream in frame["DEVC"]["STRM"]:
@@ -93,7 +115,7 @@ class Extractor:
         omega = np.array(self.accl) / self.accl_scal / 9.80665
         self.num_accl_samples = omega.shape[0]
 
-        self.accl_rate = self.num_accl_samples / self.video_length 
+        self.accl_rate = self.num_accl_samples / int(self.video_length)
         print("Accl rate: {} Hz, should be close to 200 or 400 Hz".format(self.accl_rate))
 
 
@@ -114,6 +136,12 @@ class Extractor:
         if with_timestanp:
             return self.parsed_accl
         return self.parsed_accl[:,1:]
+
+    def get_cori(self):
+        return self.parsed_cori
+
+    def get_iori(self):
+        return self.parsed_iori
 
     def get_video_length(self):
         return self.video_length
