@@ -6,8 +6,6 @@ from scipy import signal
 from scipy.spatial.transform import Rotation
 from PySide2 import QtCore, QtWidgets, QtGui
 
-import json
-
 class SmoothingAlgo:
     def __init__(self, name="Nothing"):
         self.name = name
@@ -27,7 +25,8 @@ class SmoothingAlgo:
 
         # Enable if the smoothing algo should directly return correction quats from raw data
         self.bypass_external_processing = False
-        
+        self.debug_plot = True
+
     def get_ui_widget(self):
         if self.ui_widget:
             return self.ui_widget
@@ -225,6 +224,22 @@ class SmoothingAlgo:
         # Return timelist, quaternion list
         return False, False
 
+    def plot(self, times, unsmoothed, smoothed, labels, alpha=.6):
+            fig, ax = plt.subplots()
+            ax.plot(times, unsmoothed, alpha=alpha)
+            ax.set_prop_cycle(None)
+            ax.plot(times, smoothed)
+            ax.set(title="Smoothing", xlabel="Time [s]")
+            plt.legend(labels)
+            plt.show()
+
+            # plot curvature
+            # fig, ax = plt.subplots()
+            # ax.set_prop_cycle(None)
+            # ax.plot(times[2:], np.diff(np.asarray(smoothed), n=2, axis=0))
+            # ax.set(title="Curvature", xlabel="Time [s]")
+            # plt.legend(labels)
+            # plt.show()
 
 
 class PlainSlerp(SmoothingAlgo):
@@ -275,8 +290,11 @@ class PlainSlerp(SmoothingAlgo):
         #        eul = Rotation([quat[1], quat[2], quat[3], quat[0]]).as_euler("xyz")
         #        new_quat = Rotation.from_euler('xyz', [eul[0], eul[1], np.pi]).as_quat()
         #        smoothed_orientation2[i,:] = [new_quat[3], new_quat[0], new_quat[1], new_quat[2]]
+        if self.debug_plot:
+            self.plot(times, orientation_list, smoothed_orientation2, ["w", "x", "y", "z"])
 
         return times, smoothed_orientation2
+
 
 class LimitedSlerp(SmoothingAlgo):
     """Default symmetrical quaternion slerp with limits
@@ -356,6 +374,7 @@ class LimitedSlerp(SmoothingAlgo):
 
         return times, smoothed_orientation2
 
+
 class RateSmoothing(SmoothingAlgo):
     def __init__(self):
         super().__init__("Yaw pitch roll smoothing")
@@ -409,7 +428,10 @@ class RateSmoothing(SmoothingAlgo):
         correction_quats[:,[0,1,2,3]] = correction_quats[:,[3,0,1,2]]
 
         # Return timelist, quaternion list
+        if self.debug_plot:
+            self.plot(times, gyro[:, 2], smoothed_traj[:, 2], ["pitch", "yaw", "roll"], alpha=.2)
         return times, correction_quats
+
 
 class Aphobius(SmoothingAlgo):
     """Limited quaternion slerp
@@ -496,8 +518,11 @@ class Aphobius(SmoothingAlgo):
 
         for i in range(self.num_data_points):
             final_orientation[i] = quat.slerp(high_smooth[i], low_smooth[i],[interp_factor[i]])[0]
+        if self.debug_plot:
+            self.plot(times, orientation_list, final_orientation, ["w", "x", "y", "z"])
 
         return times, final_orientation
+
 
 class Aphobius2(SmoothingAlgo):
     """Velocity dampened quaternion slerp
@@ -612,6 +637,8 @@ class Aphobius2(SmoothingAlgo):
         print("Max pitch rotation: {0:.2f} Max yaw rotation: {1:.2f} Max roll rotation: {2:.2f}".format(np.rad2deg(max_pitch), np.rad2deg(max_yaw), np.rad2deg(max_roll)))
         print("Modify dampening settings until you get the desired values (recommended around 6 on all axes)")
         #endregion
+        if self.debug_plot:
+            self.plot(times, orientation_list, vel_corr_smooth, ["w", "x", "y", "z"])
 
         return times, vel_corr_smooth
 
@@ -674,7 +701,10 @@ class HorizonLock(SmoothingAlgo):
 
 
         new_quat[:,[0,1,2,3]] = new_quat[:,[3,0,1,2]]
-        
+
+        if self.debug_plot:
+            self.plot(times, orientation_list, new_quat, ["w", "x", "y", "z"])
+
         return times, new_quat
 
 smooth_algo_classes = []

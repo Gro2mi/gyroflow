@@ -34,6 +34,7 @@ import json
 import multiprocessing as mp
 from _version import __version__
 
+import scipy
 from scipy import signal, interpolate
 
 import time
@@ -290,7 +291,6 @@ class Stabilizer:
 
 
     def multi_sync_add_slice(self, slice_frame_start, slicelength, d1, cost1, times1, transforms1, debug_plots = True):
-
         max_sync_cost_tot = 10 # > 10 is nogo.
         max_sync_cost = max_sync_cost_tot / 30 * slicelength
         if cost1 > max_sync_cost:
@@ -465,81 +465,71 @@ class Stabilizer:
         self.times, self.stab_transform = self.new_integrator.get_interpolated_stab_transform(start=0,interval = 1/self.fps)
         return True
 
-    def gyro_analysis(self, minimum_time=1, still_threshold=.08, flippy_threshold=2.5, debug_plots=False):
-        df = pd.DataFrame({'t': self.gyro_data[:, 0],
-                           'x': self.gyro_data[:, 1],
-                           'y': self.gyro_data[:, 2],
-                           'z': self.gyro_data[:, 3]})
-        self.gyro_rate = len(df.t) / (df.t.iloc[-1] - df.t.iloc[0])
+    def gyro_analysis(self, minimum_time=1, still_threshold=.02, min_move_threshold=0.3, flippy_threshold=2.5, debug_plots=False):
+
+        stylesheet = 'S:\Cloud\git\mjr_dark.mplstyle'
+        if os.path.isfile(stylesheet):
+            plt.style.use(stylesheet)
+        df = pd.DataFrame({'time': self.gyro_data[:, 0],
+                           'total': (self.gyro_data[:, 1] ** 2 +  self.gyro_data[:, 2] ** 2 + self.gyro_data[:, 3] ** 2) ** .5})
+        self.gyro_rate = len(df.time) / (df.time.iloc[-1] - df.time.iloc[0])
         print(f"Gyro rate: {self.gyro_rate}")
-        df['total'] = (df.x ** 2 + df.y ** 2 + df.z ** 2) ** .5
-        df['roll_mean'] = df.total.rolling(round(minimum_time * self.gyro_rate)).mean()
-        df['roll_std'] = df.total.rolling(round(minimum_time * self.gyro_rate)).std()
-        # self.gyro_rate the gyro data minimum is best: small movements -> roll_mean low, but changing movement df.roll_std high
-        df['rating'] = df.roll_mean / df.roll_std
-        df['t_roll'] = df.t.rolling(round(minimum_time * self.gyro_rate)).mean()
+        df['total_median'] = df.total.rolling(round(minimum_time * self.gyro_rate), center=True, min_periods=1).median()
+        # df['total_mean'] = df.total.rolling(round(minimum_time * self.gyro_rate), center=True, min_periods=1).mean()
+        # df['total_std'] = df.total.rolling(round(minimum_time * self.gyro_rate), center=True, min_periods=1).std()
+        # savgol filter yields better results
+        window_length = round(minimum_time * self.gyro_rate)
+        if window_length % 2 == 0:
+            window_length += 1
+        df['total_mean'] = scipy.signal.savgol_filter((df.total.rolling(round(minimum_time * self.gyro_rate)).mean()), window_length=window_length, polyorder=1)
+        df['total_std'] = scipy.signal.savgol_filter(df.total.rolling(round(minimum_time * self.gyro_rate)).std(),
+                                                      window_length=window_length, polyorder=1)
+        df['gradient'] = abs(np.gradient(df.total_mean, df.time))
+        # trying to get little movement but high change of rotation speed
+        df['rating'] = (1 + df.gradient) / (1 + df.total_mean)
+        df.rating = df.rating/df.rating.median()
+        df['moving'] = df.total_median > still_threshold
+        df['flippy'] = (df.total_mean > flippy_threshold) | (df.gradient > 2)
 
-        # threshold the gyro data
-        still_mask = df.roll_mean <= still_threshold
+        flippy_start_pts = df[(df.flippy.diff() == 1) & df.flippy].time.to_list()
+        flippy_end_pts = df[(df.flippy.diff() == 1) & ~df.flippy].time.to_list()
+        # excluding flippy and low movement parts
+        other = 0
+        df.rating = df.rating.where(df.total_median > min_move_threshold, other=other)
+        df.rating = df.rating.where(~df.flippy, other=other)
+        # padding flippy sections
+        for end in flippy_end_pts:
+            df.rating = df.rating.where(~((df.time < (end + minimum_time)) & (df.time > end)), other=other)
+        for start in flippy_start_pts:
+            df.rating = df.rating.where(~((df.time > (start - minimum_time)) & (df.time < start)), other=other)
+        return df
 
-        # find parts with no movement
-        still = np.zeros(len(df))
-        still[still_mask] = 1
-        end_points = np.where(np.diff(still) == -1)[0]
-        start_points = np.where(np.diff(still) == 1)[0]
-        duration = np.array([sum(1 for _ in group) for key, group in itertools.groupby(still_mask)])[
-                   -(int(still[0]) - 1)::2]
-        long_still = np.where(duration > self.gyro_rate * minimum_time)[0]
-        trim_start = 0
-        trim_end = df.iloc[-1].t
-        if len(long_still) == 1:
-            if end_points[long_still[0]] > len(df.t_roll) / 2:
-                trim_end = start_points[long_still[-1]] / self.gyro_rate
-            else:
-                trim_start = end_points[long_still[0]] / self.gyro_rate
+    def estimate_trim_points(self, df):
+        still_start_pts = df[(df.moving.diff() == 1) & df.moving].time.to_list()
+        still_end_pts = (df[(df.moving.diff() == 1) & ~df.moving].time).to_list()
+        # if no still section is found
+        if len(still_start_pts) == 0 and len(still_end_pts) == 0:
+            still_start_pts.append(df.time.iloc[0])
+            still_end_pts.append(df.time.iloc[-1])
+        # edge cases
+        if len(still_start_pts) > len(still_end_pts):
+            still_end_pts.append(df.time.iloc[-1])
+        elif len(still_start_pts) < len(still_end_pts):
+            still_start_pts.insert(0, df.time.iloc[0])
+        elif still_start_pts[0] > still_end_pts[0]:
+            still_start_pts.insert(0, df.time.iloc[0])
+            still_end_pts.append(df.time.iloc[-1])
+        df_trim = pd.DataFrame(data={'start': still_start_pts, 'end': still_end_pts})
+        df_trim['duration'] = df_trim.end - df_trim.start
 
-        elif len(long_still) > 1:
-            trim_start = end_points[long_still[0]] / self.gyro_rate
-            trim_end = start_points[long_still[-1]] / self.gyro_rate
-        trim_start = max(trim_start - minimum_time / 2, 0)
-        trim_end = min(trim_end - minimum_time / 2, int(df.iloc[-1].t))
-
+        # suggest longest part with movement of video as trim points
+        df_trim_max_duration = df_trim.iloc[df_trim.duration.argmax()]
+        trim_start = df_trim_max_duration.start
+        trim_end = df_trim_max_duration.end
         print("Trim start: ", trim_start)
         print("Trim end: ", trim_end)
-
-        recommended_syncs = pd.DataFrame(columns=['t', 'rating'])
-        # search for best point in a one second window
-        for ii in range(df.index[0], df.index[-round(self.gyro_rate + 1)], round(self.gyro_rate)):
-            slc = df.loc[ii: ii + round(self.gyro_rate)]
-            best = slc.rating.argmin()  # return -1 with nan only
-            if best != -1 and slc.total.max() < flippy_threshold * 2:
-                recommended_syncs = recommended_syncs.append({'t': df.loc[ii + best].t_roll, 'rating': df.loc[ii + best].rating}, ignore_index=True)
-
         self.trim = (trim_start, trim_end)
-        self.smooth_parts = recommended_syncs
-
-        if debug_plots:
-            flippy_mask = df.roll_mean > flippy_threshold
-            smooth_mask = (still_threshold < df.roll_mean) & (df.roll_mean < flippy_threshold)
-            fig, ax = plt.subplots(1, 1, sharey=True, sharex=True)
-            alpha = .02
-            ax.plot(df.t_roll[still_mask], len(df.t[still_mask]) * [-1], '.k', markersize=1, alpha=alpha)
-            ax.plot(df.t_roll[smooth_mask], len(df.t[smooth_mask]) * [-.75], marker='.', color='lime', markersize=1,
-                    alpha=alpha)
-            ax.plot(df.t_roll[flippy_mask], len(df.t[flippy_mask]) * [-.5], '.r', markersize=2, alpha=alpha * 5)
-            ax.plot(df.t, df.total, 'b')
-            ax.set(xlabel="time [s]", ylabel="omega_total [rad/s]")
-            ax.axvline(trim_start, color='orange')
-            ax.axvline(trim_end, color='darkviolet')
-            plt.grid()
-            black_patch = mpatches.Patch(color='black', label='still')
-            green_patch = mpatches.Patch(color='lime', label='smooth')
-            red_patch = mpatches.Patch(color='red', label='flippy')
-            orange_line = mlines.Line2D([], [], color='orange', label='trim start')
-            teal_line = mlines.Line2D([], [], color='darkviolet', label='trim end')
-            blue_line = mlines.Line2D([], [], color='blue', label='gyro omega_total')
-            plt.legend(handles=[blue_line, red_patch, green_patch, black_patch, orange_line, teal_line])
-            plt.show()
+        return self.trim
 
     def get_trim_start(self, offset=2):
         return (max(self.trim[0] - offset, 0))
@@ -549,8 +539,8 @@ class Stabilizer:
 
     def get_recommended_syncpoints(self, num_frames_analyze, max_points=9, debug_plots=True):
         analyzed_time = num_frames_analyze / self.fps
-        self.gyro_analysis(analyzed_time, debug_plots=debug_plots)
-
+        df = self.gyro_analysis(analyzed_time, debug_plots=debug_plots)
+        self.estimate_trim_points(df)
         syncpoints = []
 
         num_frames_offset = int(num_frames_analyze / 2)
@@ -577,24 +567,38 @@ class Stabilizer:
             syncpoints.append([last_index, num_frames_analyze])
 
         else:
-            first_index = round(self.trim[0] * self.fps)
-            last_index = round(self.trim[1] * self.fps) - num_frames_analyze
+            # excluding first few seconds because frames often can't be read
+            first_index = round(max((self.trim[0] + analyzed_time) * self.fps, 3 * self.fps))
+            last_index = round(self.trim[1] * self.fps) - num_frames_analyze - 5
 
             num_syncs = max(min(round((last_index - first_index)/inter_delay_frames), max_slices), min_slices)
             inter_frames_actual = (last_index - first_index) / num_syncs
             for i in range(num_syncs):
                 min_frame_time = round(first_index + i * inter_frames_actual) / self.fps
-                max_frame_time = int(first_index + (i + 1) * inter_frames_actual - round(self.gyro_rate)) / self.fps
-                mask = (self.smooth_parts.t > min_frame_time) & (self.smooth_parts.t < max_frame_time)
-                slc = self.smooth_parts[mask]
-                if len(slc) != 0:
-                    row = slc.iloc[slc.rating.argmin()]
-                    frame = round(row.t * self.fps + self.initial_offset)
-                else:
-                    frame = round(min_frame_time * self.fps + self.initial_offset)
+                max_frame_time = int(first_index + (i + 1) * inter_frames_actual - 5) / self.fps - analyzed_time
+                window = df[(df.time > min_frame_time) & (df.time < max_frame_time)]
+                idx = window.rating.argmax()
+                t = max(0, window.time.iloc[idx] - analyzed_time)
+                frame = round(t * self.fps + self.initial_offset)
                 syncpoints.append([frame, num_frames_analyze])
         print(f"Recommended syncpoints [s]: {', '.join([str(round(s[0] / self.fps, 2)) for s in syncpoints])}")
+
+        if debug_plots:
+            self.plot_syncpoints_and_trim(df, syncpoints, analyzed_time)
         return syncpoints
+
+    def plot_syncpoints_and_trim(self, df, sync_pts, analyzed_time):
+            fig, ax = plt.subplots(1, 1, sharey=True, sharex=True)
+            ax.plot(df.time, df.total_mean, label='gyro total')
+            ax.plot(df.time, df.rating, label='sync rating')
+            ax.set(xlabel="time [s]", ylabel="omega_total [rad/s]", title="Syncpoint and trim estimation")
+            ax.axvline(self.trim[0], color='#9c27ae', alpha=.5, label="trim start")
+            ax.axvline(self.trim[1], color='#f1800e', alpha=.5, label="trim end")
+            for pt in sync_pts:
+                ax.axvspan(pt[0]/self.fps, pt[0]/self.fps + analyzed_time, color='green', alpha=.2, label="sync")
+            handles, labels = ax.get_legend_handles_labels()
+            plt.legend(handles=handles[:5], loc='upper right')
+            plt.show()
 
     def full_auto_sync(self, max_fitting_error=0.02, max_points=9, debug_plots=True):
         if self.use_gyroflow_data_file:
@@ -632,6 +636,7 @@ class Stabilizer:
         # collecting gyro drift data
         if self.gyro_coefficients is not None:
             line = ",".join([self.videopath,
+                             self.calibrationfile,
                              str(self.gyro_rate),
                              str(1 - ((round(self.gyro_rate/100) * 100) / self.gyro_rate)),
                              str(self.gyro_coefficients[0]),
@@ -641,7 +646,7 @@ class Stabilizer:
             file_name = "gyro_drift_offset.csv"
             if not os.path.isfile(file_name):
                 with open(file_name, 'w') as file:
-                    file.write("videopath,gyro_rate,calculated_drift,sync_drift,sync_offseet,fps\n")
+                    file.write("videopath,cam_preset,gyro_rate,calculated_drift,sync_drift,sync_offset,fps\n")
             with open(file_name, 'a') as file:
                 file.write(line + '\n')
 
@@ -661,7 +666,13 @@ class Stabilizer:
         start = time.time()
 
         if max_points > 0:
-            sync_points += self.get_recommended_syncpoints(n_frames, max_points=max_points, debug_plots=debug_plots)
+            new_sync_points = self.get_recommended_syncpoints(n_frames, max_points=max_points, debug_plots=debug_plots)
+            if len(sync_points) == 0:
+                sync_points = new_sync_points
+            else:
+                for sp in new_sync_points:
+                    if sp[0] not in [s[0] for s in sync_points]:
+                        sync_points += sp
 
         # Ensure sync points are sorted by frame number (not in order if `sync_points` was set)
         sync_points.sort(key = lambda s : s[0])
@@ -1254,49 +1265,38 @@ class Stabilizer:
 
 
         if audio:
-            time.sleep(.5)
-            ffmpeg_command = [
-                "-y",
-                "-i",
-                self.videopath,
-                "-ss",
-                str(tstart / self.fps),
-                "-to",
-                str(tend / self.fps),
-                "-vn",
-                "-acodec",
-                "copy",
-                "audio.mp4"
-            ]
-            out.execute_ffmpeg_cmd(ffmpeg_command)
-
+            time.sleep(.1)
             tmp_ext = "_audio." + outpath.split('.')[-1]
             ffmpeg_command = [
                 "-y",
+                "-an",
                 "-i",
                 outpath,
+                "-vn",
+                "-ss",
+                str(tstart / self.fps),
                 "-i",
-                "audio.mp4",
-                "-c:v",
-                "copy",
-                "-c:a",
+                self.videopath,
+                "-c",
                 "copy",
                 "-map",
                 "0:v:0",
                 "-map",
                 "1:a:0",
+                "-shortest",
                 outpath + tmp_ext,
-            ]  # `-y` parameter is to overwrite outputfile if exists
-
-            # execute FFmpeg command
+            ]
             out.execute_ffmpeg_cmd(ffmpeg_command)
+            time.sleep(0.2)
             if os.path.isfile(outpath + tmp_ext):
-                os.replace(outpath + tmp_ext, outpath)
-                print("Audio exported")
+                try:
+                    os.replace(outpath + tmp_ext, outpath)
+                    print("Audio exported")
+                except Exception as e:
+                    print(e)
+                    print(f"Audio export kinda failed. You're file with audio could be named {outpath + tmp_ext}")
             else:
-                print("Failed to export audio")
-            if os.path.isfile("audio.mp4"):
-                os.remove("audio.mp4")
+                print("ffmpeg failed to export audio. Export again with detailed debug info enabled.")
 
 
     def export_gyroflow_file(self, filename=None, out_size = (1920,1080), smoothingFocus=2.0, zoom=1.0):
@@ -2363,7 +2363,7 @@ def optical_flow(
 
         succ, curr = cap.read()
         if video_rotate_code != -1:
-            prev = cv2.rotate(prev, video_rotate_code)
+            curr = cv2.rotate(curr, video_rotate_code)
 
         frame_id = (int(cap.get(cv2.CAP_PROP_POS_FRAMES)))
         frame_time = (cap.get(cv2.CAP_PROP_POS_MSEC)/1000)
@@ -2375,7 +2375,6 @@ def optical_flow(
             # Only add if succeeded
             frame_idx.append(frame_id)
             frame_times.append(frame_time)
-
 
             curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
             if undistort.image_is_stretched():
@@ -2602,26 +2601,62 @@ class ParallelSync:
 
 
     def begin_sync_parallel(self):
-        n_proc = min(mp.cpu_count(), len(self.sync_points))
-        print(n_proc)
+        n_proc = min(mp.cpu_count() - 1, len(self.sync_points))
         pool = mp.Pool(n_proc)
         print("Starting parallel auto sync")
         proc_results = pool.starmap(self.optical_flow, self.sync_points)
         return proc_results
 
+class Sync:
+    def __init__(self, num_syncpoints, gyro, acc):
+        self.syncpoints = []
+        self.num_syncpoints = num_syncpoints
+        self.gyro_estimated_drift = 0
+        self.gyro_estimated_offset = 0
+        self.gyro = gyro
+        self.acc = acc
+        self.gyro_drift = 0
+        self.gyro_offset = 0
+
+
+    def get_estimated_gyro_offset_and_drift(self):
+        pass
+
+    def adjust_gyro_times(self):
+        self.gyro[:,0] = self.gyro[:, 0] * (1 + self.gyro_estimated_drift) + self.gyro_estimated_offset
+
+
+class SyncPoint:
+    def __init__(self, start, num_frames):
+        self.offset = None
+        self.error = None
+        self.rough_offset = None
+        self.better_offset = None
+        self.optical_flow = None
+        self.gyro = None
+        self.start = start
+        self.used = False
+        self.num_frames = num_frames
+        self.rating = 0
+        self.total_angular_velocity = None
+
+
+
 if __name__ == "__main__":
     import cProfile
     import pstats
 
-    infile_path = r"D:\git\FPV\videos\GH011145.MP4"
+    infile_path = r"S:\Cloud\git\FPV\videos\GH011217.MP4"
+    # infile_path = r'S:\Cloud\git\FPV\videos\external_gyro_-15offset\LOG00001.BFL.csv'
     log_guess, log_type, variant = gyrolog.guess_log_type_from_video(infile_path)
     if not log_guess:
         print("Can't guess log")
         exit()
 
-    stab = MultiStabilizer(infile_path, r"D:\git\FPV\GoPro_Hero6_2160p_43.json", log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
-
-    stab.full_auto_sync_parallel()
+    stab = MultiStabilizer(infile_path, r"S:\Cloud\git\FPV\GoPro_Hero6_2160p_43.json", log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
+    # stab.gyro_analysis(debug_plots=True)
+    stab.get_recommended_syncpoints(30)
+    # stab.full_auto_sync_parallel(debug_plots=True)
     # stab.full_auto_sync()
 
     # cProfile.run('stab.full_auto_sync()', 'restats')

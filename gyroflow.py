@@ -2620,7 +2620,9 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
             print("Sync not allowed here")
             return False
 
-        self.stab.multi_sync_add_slice(time * self.stab.fps, OF_slice_length, debug_plots = False)
+        d1, cost1, times1, transforms1 = self.stab.optical_flow_comparison(time * self.stab.fps, OF_slice_length,
+                                                                      debug_plots=False)
+        self.stab.multi_sync_add_slice(time * self.stab.fps, OF_slice_length, d1, cost1, times1, transforms1, debug_plots = False)
 
         self.multiSyncUI.update_from_stab_data()
 
