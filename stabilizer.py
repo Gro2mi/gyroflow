@@ -2344,7 +2344,7 @@ def estimate_gyro_offset(
 
     print("Estimated offset: {}".format(rough_offset))
 
-
+    return rough_offset, 1
     if debug_plots:
         plt.figure()
         plt.plot(offsets, costs)
@@ -2355,19 +2355,19 @@ def estimate_gyro_offset(
     # Find better sync with smaller search space
     dt = 0.2
     N = int(dt * 5000)
-    do_hpf = False
+    # do_hpf = False
 
     # run both gyro and video through high pass filter
     # https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.butter.html
 
-    if do_hpf:
-        filterorder = 10
-        filterfreq = 4 # hz
-        sosgyro = signal.butter(filterorder, filterfreq, "highpass", fs=gyro_rate, output="sos")
-        sosvideo = signal.butter(filterorder, filterfreq, "highpass", fs=fps, output="sos")
-
-        gyro_data = signal.sosfilt(sosgyro, gyro_data, 0) # Filter along "vertical" time axis
-        OF_transforms = signal.sosfilt(sosvideo, OF_transforms, 0)
+    # if do_hpf:
+    #     filterorder = 10
+    #     filterfreq = 4 # hz
+    #     sosgyro = signal.butter(filterorder, filterfreq, "highpass", fs=gyro_rate, output="sos")
+    #     sosvideo = signal.butter(filterorder, filterfreq, "highpass", fs=fps, output="sos")
+    #
+    #     gyro_data = signal.sosfilt(sosgyro, gyro_data, 0) # Filter along "vertical" time axis
+    #     OF_transforms = signal.sosfilt(sosvideo, OF_transforms, 0)
 
     #plt.plot(gyro_times, gyro_data[:,0])
     #plt.plot(gyro_times, filtered_gyro_data[:,0])
@@ -2397,28 +2397,18 @@ def estimate_gyro_offset(
     return better_offset, cost
 
 
-class ParallelSync:
-    def __init__(self, stab, sync_points, debug_plots=True):
-        self.videofile = stab.videopath
-        self.offset = 0
-
-        self.is_adding = False
-        self.index_list = []
-        self.OF_list = []
+class Sync:
+    def __init__(self, stab, num_frames, debug_plots=True):
+        self.video_file = stab.videopath
         self.undistort = stab.undistort
-        self.height = 2028
-        self.width = 2704
-        self.num_frames_skipped = stab.num_frames_skipped
-
-        self.gyro_times = stab.integrator.get_raw_data("t")
-        self.gyro_data = stab.integrator.get_raw_data("xyz")
-        self.rough_sync_search_interval = stab.rough_sync_search_interval
-        self.initial_offset = stab.initial_offset
-        self.gyro_rate = stab.integrator.gyro_sample_rate
         self.fps = stab.fps
+        self.num_frames = num_frames
+        self.df_gyro = pd.DataFrame(np.copy(stab.integrator.gyro), columns=['time', 'omega_x', 'omega_y', 'omega_z'])
+        self.rough_sync_search_interval = stab.rough_sync_search_interval
+        # TODO remove this line
+        self.rough_sync_search_interval = 1
+        self.initial_offset = stab.initial_offset
         self.debug_plots = debug_plots
-        self.sync_points = sync_points
-
         self.process_dimension = stab.process_dimension
         self.video_rotate_code = stab.video_rotate_code
         self.sync_points = []
