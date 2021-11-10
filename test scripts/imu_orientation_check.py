@@ -12,7 +12,6 @@ from calibrate_video import FisheyeCalibrator
 import scipy
 from scipy.spatial.transform import Rotation
 
-
 import pandas as pd
 import os
 import gyrolog
