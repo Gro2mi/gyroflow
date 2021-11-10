@@ -677,7 +677,7 @@ class Stabilizer:
         # Ensure sync points are sorted by frame number (not in order if `sync_points` was set)
         sync_points.sort(key = lambda s : s[0])
 
-        ps = ParallelSync(self, sync_points)
+        ps = Sync(self, sync_points)
         sync_results = ps.begin_sync_parallel()
         print(f"Time needed for parallel auto sync: {time.time() - start:.2f} s")
         for sync_point, result in zip(ps.sync_points, sync_results):
@@ -1318,7 +1318,7 @@ class Stabilizer:
             "orig_w": self.orig_dimension[0],
             "orig_h": self.orig_dimension[1],
             "process_w": self.process_dimension[0],
-            "process_h": self.process_dimension[0],
+            "process_h": self.process_dimension[1],
             "fps": self.fps,
             "num_frames": self.num_frames
         }
@@ -2203,58 +2203,42 @@ def find_gyroflow_data_file(videofile="in.mp4"):
     return ""
 
 
-def fast_gyro_cost_func(fps, OF_times, OF_transforms, gyro_times, gyro_data):
-
-
-    if OF_times[0] < gyro_times[0]:
+def fast_gyro_cost_func(df_optical_flow, _df_gyro, offset=0):
+    df_gyro = _df_gyro.copy()
+    df_gyro.time += offset
+    if df_optical_flow.time.iloc[0] < df_gyro.time.iloc[0]:
         return 100
 
-    if OF_times[-1] > gyro_times[-1]:
+    if df_optical_flow.time.iloc[-1] > df_gyro.time.iloc[-1]:
         return 100
-
-    new_OF_transforms = np.copy(OF_transforms) * fps
-    # Optical flow movements gives pixel movement, not camera movement
-    new_OF_transforms[:,0] = -new_OF_transforms[:,0]
-    #new_OF_transforms[:,1] = -new_OF_transforms[:,1]
-
-
     axes_weight = np.array([0.7,0.7,1]) #np.array([0.5,0.5,1]) # Weight of the xyz in the cost function. pitch, yaw, roll. More weight to roll
 
+    nearest = interpolate.interp1d(df_gyro.time, df_gyro.loc[:, 'omega_x':'omega_z'], kind='nearest', assume_sorted=True, axis = 0, fill_value=np.array([0,0,0]), bounds_error=False)
+    gyro_dat_resampled = nearest(df_optical_flow.time)
 
-    #t1 = OF_times[0]
-    #t2 = OF_times[-1]
-
-    #mask = ((t1 <= gyro_times) & (gyro_times <= t2))
-
-    #sliced_gyro_data = gyro_data[mask,:]
-    #sliced_gyro_times = gyro_times[mask]
-
-    nearest = interpolate.interp1d(gyro_times, gyro_data, kind='nearest', assume_sorted=True, axis = 0, fill_value=np.array([0,0,0]), bounds_error=False)
-    gyro_dat_resampled = nearest(OF_times)
-
-    squared_diff = (gyro_dat_resampled - new_OF_transforms)**2
+    squared_diff = (gyro_dat_resampled - df_optical_flow.loc[:, 'omega_x':'omega_z'])**2
     sum_squared_diff = (squared_diff.sum(0) * axes_weight).sum()
-
+    # fig, ax = plt.subplots()
+    # ax.plot(df_optical_flow.time, df_optical_flow.omega_z)
+    # df_gyro = df_gyro[(df_gyro.time < df_optical_flow.time.iloc[-1]) & (df_gyro.time > df_optical_flow.time.iloc[0])]
+    # ax.plot(df_gyro.time, df_gyro.omega_z)
+    # plt.show()
     return sum_squared_diff
 
 
-def better_gyro_cost_func(fps, OF_times, OF_transforms, gyro_times, gyro_data):
-
-    new_OF_times = np.array(OF_times)
+def better_gyro_cost_func(df_optical_flow, _df_gyro, offset=0):
+    df_gyro = _df_gyro.copy()
+    df_gyro.time += offset
+    df_gyro = df_gyro.reset_index()
 
     # Shift by one frame to patch timing
     #new_OF_times += np.mean(new_OF_times[1:] - new_OF_times[:-1]) # / 2
 
-    if new_OF_times[0] < gyro_times[0]:
+    if df_optical_flow.time.iloc[0] < df_gyro.time.iloc[0]:
         return 100
 
-    if new_OF_times[-1] > gyro_times[-1]:
+    if df_optical_flow.time.iloc[-1] > df_gyro.time.iloc[-1]:
         return 100
-
-    new_OF_transforms = np.copy(OF_transforms) * fps
-    # Optical flow movements gives pixel movement, not camera movement
-    new_OF_transforms[:,0] = -new_OF_transforms[:,0]
-    #new_OF_transforms[:,1] = -new_OF_transforms[:,1]
 
     axes_weight = np.array([0.7,0.7,1]) #np.array([0.5,0.5,1]) # Weight of the xyz in the cost function. pitch, yaw, roll. More weight to roll
 
@@ -2265,45 +2249,45 @@ def better_gyro_cost_func(fps, OF_times, OF_transforms, gyro_times, gyro_data):
     next_cumulative_time = 0
 
     # Start close to match
-    mask = gyro_times > (new_OF_times[0] - 0.5)
+    mask = df_gyro.time > (df_optical_flow.time.iloc[0] - 0.5)
     first_idx = np.argmax(mask)
-    if gyro_times[first_idx] > (new_OF_times[0] - 0.5):
+    if df_gyro.time.iloc[first_idx] > (df_optical_flow.time.iloc[0] - 0.5):
         gyro_idx = first_idx
     else:
         return 100
 
-    while gyro_times[gyro_idx + 1] < new_OF_times[0] and gyro_idx + 2 < len(gyro_times):
+    while df_gyro.time.iloc[gyro_idx + 1] < df_optical_flow.time.iloc[0] and gyro_idx + 2 < len(df_gyro.time):
         gyro_idx += 1
 
 
-    for OF_idx in range(len(new_OF_times)):
+    for OF_idx in range(len(df_optical_flow.time)):
         cumulative = next_gyro_snip
         cumulative_time =  next_cumulative_time
 
         # if near edge of gyro track
-        if gyro_idx + 100 > len(gyro_times):
+        if gyro_idx + 100 > len(df_gyro.time):
             #print("Outside of gyro range")
             return 100
 
-        while gyro_times[gyro_idx] < new_OF_times[OF_idx]:
-            delta_time = gyro_times[gyro_idx] - gyro_times[gyro_idx-1]
+        while df_gyro.time.iloc[gyro_idx] < df_optical_flow.time.iloc[OF_idx]:
+            delta_time = df_gyro.time.iloc[gyro_idx] - df_gyro.time.iloc[gyro_idx-1]
             cumulative_time += delta_time
 
-            cumulative += gyro_data[gyro_idx,:] * delta_time
+            cumulative += df_gyro.loc[gyro_idx,'omega_x':'omega_z'] * delta_time
             gyro_idx += 1
 
-        time_delta = new_OF_times[OF_idx] - gyro_times[gyro_idx-2]
-        time_weight = time_delta / (gyro_times[gyro_idx] - gyro_times[gyro_idx-1])
-        cumulative += gyro_data[gyro_idx-1,:] * time_delta
+        time_delta = df_optical_flow.time.iloc[OF_idx] - df_gyro.time.iloc[gyro_idx-2]
+        time_weight = time_delta / (df_gyro.time.iloc[gyro_idx] - df_gyro.time.iloc[gyro_idx-1])
+        cumulative += df_gyro.loc[gyro_idx-1,'omega_x':'omega_z'] * time_delta
         cumulative_time  += time_delta
 
-        time_delta = gyro_times[gyro_idx-1] - new_OF_times[OF_idx]
-        next_gyro_snip = gyro_data[gyro_idx-1,:] * time_delta
+        time_delta = df_gyro.time.iloc[gyro_idx-1] - df_optical_flow.time.iloc[OF_idx]
+        next_gyro_snip = df_gyro.loc[gyro_idx-1,'omega_x':'omega_z'] * time_delta
         next_cumulative_time = time_delta
 
         cumulative /= cumulative_time
 
-        diff = cumulative - new_OF_transforms[OF_idx,:]
+        diff = cumulative - df_optical_flow.loc[OF_idx,'omega_x':'omega_z']
         sum_squared_diff += np.sum(np.multiply(diff ** 2, axes_weight))
         #print("Gyro {}, OF {}".format(gyro_times[gyro_idx], OF_times[OF_idx]))
 
@@ -2315,165 +2299,21 @@ def better_gyro_cost_func(fps, OF_times, OF_transforms, gyro_times, gyro_data):
     return sum_squared_diff
 
 
+def prepare_optical_flow_image(frame, rotate_code, is_stretched=False, process_dimension=None):
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if rotate_code != -1:
+        frame = cv2.rotate(frame, rotate_code)
+    if is_stretched:
+        frame = cv2.resize(frame, process_dimension)
+    return frame
 
-def optical_flow(
-        videofile,
-        start_frame,
-        num_frames_skipped,
-        video_rotate_code,
-        process_dimension,
-        width,
-        height,
-        undistort,
-        gyro_times,
-        gyro_data,
-        rough_sync_search_interval,
-        initial_offset,
-        gyro_rate,
-        fps,
-        analyze_length=30,
-        debug_plots=True):
-    frame_times = []
-    frame_idx = []
-    transforms = []
-    prev_pts_lst = []
-    curr_pts_lst = []
-
-    cap = cv2.VideoCapture(videofile)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    time.sleep(0.05)
-
-    ret, prev = cap.read()
-
-    # if file cant be read return with huge error
-    if not ret:
-        print("Can't read this part of the file")
-        return 0, 999999, [], []
-
-    if video_rotate_code != -1:
-        prev = cv2.rotate(prev, video_rotate_code)
-    prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-    if undistort.image_is_stretched():
-        prev_gray = cv2.resize(prev_gray, process_dimension)
-
-    for i in tqdm(range(analyze_length), desc=f"Analyzing frames", colour="blue"):
-        prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3)
-
-
-
-        succ, curr = cap.read()
-        if video_rotate_code != -1:
-            curr = cv2.rotate(curr, video_rotate_code)
-
-        frame_id = (int(cap.get(cv2.CAP_PROP_POS_FRAMES)))
-        frame_time = (cap.get(cv2.CAP_PROP_POS_MSEC)/1000)
-
-        #if i % 10 == 0:
-        #    print("Analyzing frame: {}/{}".format(i,analyze_length))
-
-        if succ and i % num_frames_skipped == 0:
-            # Only add if succeeded
-            frame_idx.append(frame_id)
-            frame_times.append(frame_time)
-
-            curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
-            if undistort.image_is_stretched():
-                curr_gray = cv2.resize(curr_gray, process_dimension)
-            # Estimate transform using optical flow
-            curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
-
-            idx = np.where(status==1)[0]
-            prev_pts = prev_pts[idx]
-            curr_pts = curr_pts[idx]
-            assert prev_pts.shape == curr_pts.shape
-
-            prev_pts_lst.append(prev_pts)
-            curr_pts_lst.append(curr_pts)
-
-
-            # TODO: Try getting undistort + homography working for more accurate rotation estimation
-            src_pts = undistort.undistort_points(prev_pts, new_img_dim=(width, height))
-            dst_pts = undistort.undistort_points(curr_pts, new_img_dim=(width, height))
-
-            filtered_src = []
-            filtered_dst = []
-            for i in range(src_pts.shape[0]):
-                # if both points are within frame
-                if (0 < src_pts[i,0,0] < width) and (0 < dst_pts[i,0,0] < width) and (0 < src_pts[i,0,1] < height) and (0 < dst_pts[i,0,1] < height):
-                    filtered_src.append(src_pts[i,:])
-                    filtered_dst.append(dst_pts[i,:])
-
-            # rots contains for solutions for the rotation. Get one with smallest magnitude.
-            # https://docs.opencv.org/master/da/de9/tutorial_py_epipolar_geometry.html
-            # https://en.wikipedia.org/wiki/Essential_matrix#Extracting_rotation_and_translation
-            roteul = None
-            smallest_mag = 1000
-
-            try:
-                R1, R2, t = undistort.recover_pose(np.array(filtered_src), np.array(filtered_dst), new_img_dim=(width, height))
-
-                rot1 = Rotation.from_matrix(R1)
-                rot2 = Rotation.from_matrix(R2)
-
-                if rot1.magnitude() < rot2.magnitude():
-                    roteul = rot1.as_rotvec() #rot1.as_euler("xyz")
-                else:
-                    roteul = rot2.as_rotvec() # as_euler("xyz")
-            except:
-                print("Couldn't recover motion for this frame")
-                roteul = np.array([0, 0, 0])
-
-            prev_gray = curr_gray
-
-            transforms.append(list(roteul/num_frames_skipped))
-
-
-        else:
-            print("Skipped frame {}".format(i))
-
-    transforms = np.array(transforms)
-
-    estimated_offset, cost = estimate_gyro_offset(
-        frame_times,
-        transforms,
-        prev_pts_lst,
-        curr_pts_lst,
-        gyro_times,
-        gyro_data,
-        rough_sync_search_interval,
-        initial_offset,
-        gyro_rate,
-        fps,
-        debug_plots=debug_plots)
-    return estimated_offset, cost, frame_times, transforms
 
 def estimate_gyro_offset(
-        OF_times,
-        OF_transforms,
-        prev_pts_list,
-        curr_pts_list,
-        gyro_times,
-        gyro_data,
+        df_optical_flow,
+        df_gyro,
         rough_sync_search_interval,
         initial_offset,
-        gyro_rate,
-        fps,
         debug_plots=True):
-    #print(prev_pts_list)
-    # Estimate offset between small optical flow slice and gyro data
-
-    #print(gyro_data)
-
-    # quick low pass filter
-    # self.frame_lowpass = False
-    #
-    # if self.frame_lowpass:
-    #     params = [0.3,0.4,0.3] # weights. last frame, current frame, next frame
-    #     new_OF_transforms = np.copy(OF_transforms)
-    #     for i in range(1,new_OF_transforms.shape[0]-1):
-    #         new_OF_transforms[i,:] = new_OF_transforms[i-1,:] * params[0] + new_OF_transforms[i,:]*params[1] + new_OF_transforms[i+1,:] * params[2]
-    #
-    #     OF_transforms = new_OF_transforms
 
     costs = []
     offsets = []
@@ -2486,18 +2326,19 @@ def estimate_gyro_offset(
 
     for i in range(N):
         offset = dt/2 - i * (dt/N) + initial_offset
-        cost = fast_gyro_cost_func(fps, OF_times, OF_transforms, gyro_times + offset, gyro_data) #fast_gyro_cost_func(OF_times, OF_transforms, gyro_times + offset, gyro_data)
+        cost = fast_gyro_cost_func(df_optical_flow, df_gyro, offset) #fast_gyro_cost_func(OF_times, OF_transforms, gyro_times + offset, gyro_data)
         offsets.append(offset)
         costs.append(cost)
 
-    slice_length = len(OF_times)
-    cutting_ratio = 1
-    new_slice_length = int(slice_length*cutting_ratio)
-
-    start_idx = int((slice_length - new_slice_length)/2)
-
-    OF_times = OF_times[start_idx:start_idx + new_slice_length]
-    OF_transforms = OF_transforms[start_idx:start_idx + new_slice_length,:]
+    # TODO check if this is needed
+    # slice_length = len(df_optical_flow)
+    # cutting_ratio = 1
+    # new_slice_length = int(slice_length*cutting_ratio)
+    #
+    # start_idx = int((slice_length - new_slice_length)/2)
+    #
+    # OF_times = OF_times[start_idx:start_idx + new_slice_length]
+    # OF_transforms = OF_transforms[start_idx:start_idx + new_slice_length,:]
 
     rough_offset = offsets[np.argmin(costs)]
 
@@ -2507,7 +2348,7 @@ def estimate_gyro_offset(
     if debug_plots:
         plt.figure()
         plt.plot(offsets, costs)
-    #    plt.show()
+        plt.show()
     costs = []
     offsets = []
 
@@ -2534,7 +2375,8 @@ def estimate_gyro_offset(
     for i in range(N):
         offset = dt/2 - i * (dt/N) + rough_offset
         #cost = self.fast_gyro_cost_func(OF_times, OF_transforms, gyro_times + offset, gyro_data)
-        cost = better_gyro_cost_func(fps, OF_times, OF_transforms, gyro_times + offset, gyro_data)
+        # cost = better_gyro_cost_func(df_optical_flow, df_gyro, offset=offset)
+        cost = fast_gyro_cost_func(df_optical_flow, df_gyro, offset=offset)
         offsets.append(offset)
         costs.append(cost)
 
@@ -2544,13 +2386,13 @@ def estimate_gyro_offset(
     print("Better offset: {}, cost: {}".format(better_offset, cost))
 
     if debug_plots:
-        #plt.figure()
+        plt.figure()
         plt.plot(offsets, costs)
         plt.xlabel("Offset [s]")
         plt.ylabel("Cost")
         plt.title(f"Syncpoint Offset Estimation\nCosts: {min(costs):.4f}, Offset: {better_offset:.4f}")
 
-        #plt.show()
+        plt.show()
 
     return better_offset, cost
 
@@ -2579,66 +2421,215 @@ class ParallelSync:
 
         self.process_dimension = stab.process_dimension
         self.video_rotate_code = stab.video_rotate_code
+        self.sync_points = []
 
-    def optical_flow(self, start_frame, analyze_length):
-        return optical_flow(
-            self.videofile,
-            start_frame,
-            self.num_frames_skipped,
-            self.video_rotate_code,
-            self.process_dimension,
-            self.width,
-            self.height,
+    def add_sync_points(self, sync_points: list):
+        for sp in sync_points:
+            self.sync_points.append(self.new_sync_point(sp))
+        self.sort_sync_points()
+
+    def sort_sync_points(self):
+        self.sync_points.sort(key=lambda sp: sp.start_frame)
+
+    def new_sync_point(self, start_frame):
+        gyro = self.df_gyro[(self.df_gyro.time > start_frame/self.fps - 0.6*self.rough_sync_search_interval) &
+               (self.df_gyro.time < start_frame/self.fps + 0.6*self.rough_sync_search_interval + self.num_frames / self.fps)]
+
+        return SyncPoint(
+            self.video_file,
             self.undistort,
-            self.gyro_times,
-            self.gyro_data,
-            self.rough_sync_search_interval,
-            self.initial_offset,
-            self.gyro_rate,
-            self.fps,
-            analyze_length=analyze_length,
-            debug_plots=True)
-
+            start_frame,
+            self.num_frames,
+            gyro,
+            initial_offset=0,
+            search_interval=self.rough_sync_search_interval,
+            video_rotate_code=self.video_rotate_code,
+            process_dimension=self.process_dimension)
 
     def begin_sync_parallel(self):
-        n_proc = min(mp.cpu_count() - 1, len(self.sync_points))
-        pool = mp.Pool(n_proc)
-        print("Starting parallel auto sync")
-        proc_results = pool.starmap(self.optical_flow, self.sync_points)
-        return proc_results
+        if len(self.sync_points) == 0:
+            print("No syncpoints. Please add syncpoints before syncing")
+        pool = mp.Pool(mp.cpu_count() - 1)
+        pool.map(self.compute_optical_flow, self.sync_points)
 
-class Sync:
-    def __init__(self, num_syncpoints, gyro, acc):
-        self.syncpoints = []
-        self.num_syncpoints = num_syncpoints
-        self.gyro_estimated_drift = 0
-        self.gyro_estimated_offset = 0
-        self.gyro = gyro
-        self.acc = acc
-        self.gyro_drift = 0
-        self.gyro_offset = 0
+    def read_sync_points(self):
+        for sp in self.sync_points:
+            sp.read_optical_flow()
+
+    def cost(self):
+        for sp in self.sync_points:
+            sp.estimate_gyro_offset()
+            sp.plot()
 
 
-    def get_estimated_gyro_offset_and_drift(self):
-        pass
+    def compute_optical_flow(self, sync_point):
+        sync_point.optical_flow()
 
     def adjust_gyro_times(self):
         self.gyro[:,0] = self.gyro[:, 0] * (1 + self.gyro_estimated_drift) + self.gyro_estimated_offset
 
 
 class SyncPoint:
-    def __init__(self, start, num_frames):
-        self.offset = None
-        self.error = None
+    def __init__(self, video_file, undistort, start_frame, num_frames, df_gyro, initial_offset=0, search_interval=1, video_rotate_code=-1, process_dimension=None):
+        self.video_file = video_file
+        self.initial_offset = initial_offset
+        self.search_interval = search_interval
+        self.cost = None
         self.rough_offset = None
         self.better_offset = None
-        self.optical_flow = None
-        self.gyro = None
-        self.start = start
+        self.df_optical_flow = None
+        self.df_gyro = df_gyro
+        self.start_frame = start_frame
         self.used = False
         self.num_frames = num_frames
         self.rating = 0
         self.total_angular_velocity = None
+        self.process_dimension = process_dimension
+        self.undistort = undistort
+        self.video_rotate_code = video_rotate_code
+        self.save_path = f"{self.video_file}.of.{self.start_frame}.csv"
+
+    def optical_flow(self):
+        self.df_optical_flow = optical_flow(self.video_file,
+                                            self.undistort,
+                                            self.start_frame,
+                                            self.num_frames,
+                                            self.video_rotate_code,
+                                            self.process_dimension)
+        self.save_optical_flow()
+        return self.df_optical_flow
+
+    def fast_gyro_cost(self, offset):
+        fast_gyro_cost_func(self.df_optical_flow, self.df_gyro, offset=offset)
+
+    def better_gyro_cost(self, offset):
+        better_gyro_cost_func(self.df_optical_flow, self.df_gyro, offset=offset)
+
+    def estimate_gyro_offset(self):
+        self.better_offset, self.cost = estimate_gyro_offset(self.df_optical_flow, self.df_gyro, self.search_interval, self.initial_offset)
+
+    def save_optical_flow(self):
+        self.df_optical_flow.to_csv(self.save_path)
+
+    def read_optical_flow(self):
+        if os.path.isfile(self.save_path):
+            self.df_optical_flow = pd.read_csv(self.save_path)
+        else:
+            print(self.save_path + " file missing")
+
+    def plot(self):
+        fig, axes = plt.subplots(3, 1, sharex=True)
+        fig.suptitle(f"Syncpoint {self.start_frame}")
+        self.plot_ax(axes, 0)
+        self.plot_ax(axes, 1)
+        self.plot_ax(axes, 2)
+        plt.legend(["gyro", "optical flow", ])
+        plt.tight_layout()
+        plt.show()
+
+    def plot_ax(self, axes, idx):
+        ori = ['x', 'y', 'z']
+        axes[idx].plot(self.df_gyro.time + self.better_offset, self.df_gyro[f"omega_{ori[idx]}"])
+        axes[idx].plot(self.df_optical_flow.time, self.df_optical_flow[f"omega_{ori[idx]}"])
+        axes[idx].set(ylabel=f"omega {ori[idx]} [rad/s]")
+
+
+def optical_flow(video_file,
+                 undistort,
+                 start_frame=0,
+                 analyze_length=30,
+                 video_rotate_code=-1,
+                 horizontal_stretch_dimension=None):
+    cap = cv2.VideoCapture(video_file)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame - 1)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))   # float `width`
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if analyze_length == -1:
+        analyze_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1)
+    time.sleep(0.05)
+    if fps > 60:
+        frame_step = int(fps / 60)
+    else:
+        frame_step = 1
+
+    ret, prev = cap.read()
+
+    # if file cant be read return with huge error
+    if not ret:
+        print("Can't read this part of the file")
+        return None
+
+    prev_gray = prepare_optical_flow_image(prev, video_rotate_code, undistort.image_is_stretched(),
+                                           horizontal_stretch_dimension)
+    df_optical_flow = pd.DataFrame(index=[start_frame],
+                                   data={'time': cap.get(cv2.CAP_PROP_POS_MSEC) / 1000, 'tracked_features': 0, 'rot_x': 0, 'rot_y': 0,
+                                         'rot_z': 0})
+
+    for ii in tqdm(range(analyze_length), desc=f"Analyzing frames", colour="blue"):
+        prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30,
+                                           blockSize=3)
+        succ, curr = cap.read()
+        if succ and ii % frame_step == 0:
+            frame_id = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+            frame_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+            # frame_time can be 0 for the last few frames
+            if frame_time == 0:
+                frame_time = df_optical_flow.time.iloc[-1] + 1 / fps
+
+            curr_gray = prepare_optical_flow_image(curr, video_rotate_code, undistort.image_is_stretched(),
+                                                   horizontal_stretch_dimension)
+            # Estimate transform using optical flow
+            curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
+
+            idx = np.where(status == 1)[0]
+            prev_pts = prev_pts[idx]
+            curr_pts = curr_pts[idx]
+            assert prev_pts.shape == curr_pts.shape
+
+            # TODO: Try getting undistort + homography working for more accurate rotation estimation
+            # http://amroamroamro.github.io/mexopencv/opencv/lk_homography_demo.html
+            src_pts = undistort.undistort_points(prev_pts, new_img_dim=(width, height))
+            dst_pts = undistort.undistort_points(curr_pts, new_img_dim=(width, height))
+
+            filtered_src = []
+            filtered_dst = []
+            for i in range(src_pts.shape[0]):
+                # if both points are within frame
+                if (0 < src_pts[i, 0, 0] < width) and (0 < dst_pts[i, 0, 0] < width) and (
+                        0 < src_pts[i, 0, 1] < height) and (0 < dst_pts[i, 0, 1] < height):
+                    filtered_src.append(src_pts[i, :])
+                    filtered_dst.append(dst_pts[i, :])
+
+            # rots contains for solutions for the rotation. Get one with smallest magnitude.
+            # https://docs.opencv.org/master/da/de9/tutorial_py_epipolar_geometry.html
+            # https://en.wikipedia.org/wiki/Essential_matrix#Extracting_rotation_and_translation
+            try:
+                R1, R2, t = undistort.recover_pose(np.array(filtered_src), np.array(filtered_dst),
+                                                   new_img_dim=(width, height))
+
+                rot1 = Rotation.from_matrix(R1)
+                rot2 = Rotation.from_matrix(R2)
+
+                if rot1.magnitude() < rot2.magnitude():
+                    roteul = rot1.as_rotvec()  # rot1.as_euler("xyz")
+                else:
+                    roteul = rot2.as_rotvec()  # as_euler("xyz")
+                df_optical_flow.loc[frame_id] = [frame_time, len(filtered_src)] + roteul.tolist()
+            except cv2.error as e:
+                print(f"Couldn't recover motion for frame {frame_id}.")
+                print(e)
+
+            prev_gray = curr_gray
+    cap.release()
+    dt = df_optical_flow.time.diff()
+    df_optical_flow['omega_x'] = -df_optical_flow.rot_x / dt
+    df_optical_flow['omega_y'] = df_optical_flow.rot_y / dt
+    df_optical_flow['omega_z'] = df_optical_flow.rot_z / dt
+    df_optical_flow = df_optical_flow.drop(['rot_x', 'rot_y', 'rot_z'], axis=1)
+    df_optical_flow.time = df_optical_flow.time - 1/fps
+
+    return df_optical_flow
 
 
 
