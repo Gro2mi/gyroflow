@@ -6,7 +6,6 @@ from scipy import signal
 from scipy.spatial.transform import Rotation
 from PySide2 import QtCore, QtWidgets, QtGui
 
-
 class SmoothingAlgo:
     def __init__(self, name="Nothing"):
         self.name = name
@@ -27,7 +26,7 @@ class SmoothingAlgo:
         # Enable if the smoothing algo should directly return correction quats from raw data
         self.bypass_external_processing = False
         self.debug_plot = True
-        
+
     def get_ui_widget(self):
         if self.ui_widget:
             return self.ui_widget
@@ -105,10 +104,30 @@ class SmoothingAlgo:
     def slider_conv_func_inverse(self, minval, maxval, steps, expo, realval):
         return round(steps * ((realval - minval)/(maxval - minval))**(1/expo))
 
-    def get_summary(self):
+    def get_print_summary(self):
         # Get a readable summary of the smoothing method and settings
         summary = [self.name] + [f'{optionname}:{self.user_options[optionname]["value"]}' for optionname in self.user_options]
         return ",".join(summary)
+
+    def save_as_preset(self, file_path):
+        with open(file_path, 'w') as outfile:
+            json.dump({
+                "algo": self.name,
+                "options": {optionname: self.user_options[optionname]["value"] for optionname in
+                    self.user_options}},
+                outfile,
+                indent=4,
+                separators=(',', ': ')
+            )
+
+    def get_preset(self, file_path):
+        try:
+            with open(file_path, "r") as infile:
+                preset = json.load(infile)
+            return preset
+        except Exception as e:
+            print("Can't load smoothing preset.")
+
 
     def widget_input_update(self, optionname = ""):
         #print("Update option")
@@ -685,7 +704,7 @@ class HorizonLock(SmoothingAlgo):
 
         if self.debug_plot:
             self.plot(times, orientation_list, new_quat, ["w", "x", "y", "z"])
-        
+
         return times, new_quat
 
 smooth_algo_classes = []

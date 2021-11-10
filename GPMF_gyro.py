@@ -79,7 +79,6 @@ class Extractor:
         self.gyro_rate = self.num_gyro_samples / int(self.video_length)
         #print("Gyro rate: {} Hz, should be close to 200 or 400 Hz".format(self.gyro_rate))
 
-
         self.parsed_gyro = np.zeros((self.num_gyro_samples, 4))
         self.parsed_gyro[:,0] = np.arange(self.num_gyro_samples) * 1/self.gyro_rate
 
