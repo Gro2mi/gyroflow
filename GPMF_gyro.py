@@ -85,7 +85,7 @@ class Extractor:
 
         # self.gyro_rate = round(self.num_gyro_samples / self.video_length / 100) * 100
 
-        self.parsed_gyro = np.zeros((self.num_gyro_samples, 4))
+        # self.parsed_gyro = np.zeros((self.num_gyro_samples, 4))
         # drift = -0.005832
         # offset = 0.048
         # self.parsed_gyro[:,0] = (np.arange(self.num_gyro_samples) * 1/self.gyro_rate - offset) * (1 - drift)
