@@ -80,6 +80,9 @@ def plot(df_gyro, df_optical_flow):
     axes[2, 1].plot(df_optical_flow.time, df_optical_flow.omega_z_savgol)
     axes[0, 1].set(title="Optical Flow")
     axes[2, 1].set(xlabel="time [s]")
+    fig_tracked_features, ax_tracked_features = plt.subplots()
+    ax_tracked_features.plot(df_optical_flow.time, df_optical_flow.tracked_features)
+    ax_tracked_features.set(title="Tracked Features", xlabel="Time [s]", ylabel="Number of tracked features")
     plt.show()
 
 
