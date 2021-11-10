@@ -18,92 +18,7 @@ import os
 import gyrolog
 import matplotlib.pyplot as plt
 from datetime import datetime
-
-
-def optical_flow(videofile, lens_preset):
-
-    t_start = datetime.now()
-    undistort = FisheyeCalibrator()
-
-    undistort.load_calibration_json(lens_preset, True)
-    start_time = 0
-    df_optical_flow = pd.DataFrame(index=[0], data={'time': start_time, 'rot_x': 0,  'rot_y': 0,  'rot_z': 0})
-
-    cap = cv2.VideoCapture(videofile)
-    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    time.sleep(0.05)
-
-    ret, prev = cap.read()
-
-    # if file cant be read return with huge error
-    if not ret:
-        print("Can't read this part of the file")
-        return None
-
-    prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-    height, width, c = prev.shape
-
-    for ii in tqdm(range(num_frames), desc=f"Analyzing frames", colour="blue"):
-        prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3)
-        succ, curr = cap.read()
-        frame_id = ii + 1
-        frame_time = (cap.get(cv2.CAP_PROP_POS_MSEC)/1000)
-        # frame_time can be 0 for the last few frames
-        if frame_time == 0:
-            frame_time = df_optical_flow.time.iloc[-1] + 1/fps
-
-        if succ:
-            curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
-            curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
-
-            idx = np.where(status == 1)[0]
-            prev_pts = prev_pts[idx]
-            curr_pts = curr_pts[idx]
-            assert prev_pts.shape == curr_pts.shape
-
-            # TODO: Try getting undistort + homography working for more accurate rotation estimation
-            src_pts = undistort.undistort_points(prev_pts, new_img_dim=(width, height))
-            dst_pts = undistort.undistort_points(curr_pts, new_img_dim=(width, height))
-
-            filtered_src = []
-            filtered_dst = []
-            for kk in range(src_pts.shape[0]):
-                # if both points are within frame
-                if (0 < src_pts[kk, 0, 0] < width) and (0 < dst_pts[kk, 0, 0] < width) and (0 < src_pts[kk, 0, 1] < height) and (0 < dst_pts[kk, 0, 1] < height):
-                    filtered_src.append(src_pts[kk, :])
-                    filtered_dst.append(dst_pts[kk, :])
-
-            # rots contains for solutions for the rotation. Get one with smallest magnitude.
-            # https://docs.opencv.org/master/da/de9/tutorial_py_epipolar_geometry.html
-            # https://en.wikipedia.org/wiki/Essential_matrix#Extracting_rotation_and_translation
-
-            try:
-                r1, r2, t = undistort.recover_pose(np.array(filtered_src), np.array(filtered_dst), new_img_dim=(width, height))
-
-                rot1 = Rotation.from_matrix(r1)
-                rot2 = Rotation.from_matrix(r2)
-
-                if rot1.magnitude() < rot2.magnitude():
-                    roteul = rot1.as_rotvec() #rot1.as_euler("xyz")
-                else:
-                    roteul = rot2.as_rotvec() # as_euler("xyz")
-                df_optical_flow.loc[frame_id] = [frame_time] + roteul.tolist()
-            except cv2.error as e:
-                print(f"Couldn't recover motion for frame {frame_id}.")
-                print(e)
-
-            prev_gray = curr_gray
-        else:
-            print("Skipped frame {}".format(ii))
-
-    dt = df_optical_flow.time.diff()
-    df_optical_flow['omega_x'] = -df_optical_flow.rot_x / dt
-    df_optical_flow['omega_y'] = df_optical_flow.rot_y / dt
-    df_optical_flow['omega_z'] = df_optical_flow.rot_z / dt
-
-    print(f"Time to calculate optical flow: {datetime.now() - t_start}")
-    return df_optical_flow
+import stabilizer
 
 
 def check_videofile(videofile):
@@ -194,7 +109,9 @@ def guess_orientation_matrix(df_gyro):
 def get_optical_flow(video_file, lens_preset, transform_file):
     # check_videofile(video_file)
     if not os.path.isfile(transform_file):
-        df_optical_flow = optical_flow(video_file, lens_preset)
+        undistort = FisheyeCalibrator()
+        undistort.load_calibration_json(lens_preset, True)
+        df_optical_flow = stabilizer.optical_flow(video_file, undistort, analyze_length=-1)
         df_optical_flow.to_csv(transform_file)
     else:
         df_optical_flow = pd.read_csv(transform_file, index_col=0)
