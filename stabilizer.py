@@ -471,7 +471,7 @@ class Stabilizer:
         if os.path.isfile(stylesheet):
             plt.style.use(stylesheet)
         df = pd.DataFrame({'time': self.gyro_data[:, 0],
-                           'total': (self.gyro_data[:, 1] ** 2 +  self.gyro_data[:, 2] ** 2 + self.gyro_data[:, 3] ** 2) ** .5})
+                           'total': (self.gyro_data[:, 1] ** 2 + self.gyro_data[:, 2] ** 2 + self.gyro_data[:, 3] ** 2) ** .5})
         self.gyro_rate = len(df.time) / (df.time.iloc[-1] - df.time.iloc[0])
         print(f"Gyro rate: {self.gyro_rate}")
         df['total_median'] = df.total.rolling(round(minimum_time * self.gyro_rate), center=True, min_periods=1).median()
@@ -2203,7 +2203,7 @@ def find_gyroflow_data_file(videofile="in.mp4"):
     return ""
 
 
-def fast_gyro_cost_func(df_optical_flow, _df_gyro, offset=0):
+def fast_gyro_cost_func(df_optical_flow, _df_gyro, offset=0, axes_weight=[0.7,0.7,1]):
     df_gyro = _df_gyro.copy()
     df_gyro.time += offset
     if df_optical_flow.time.iloc[0] < df_gyro.time.iloc[0]:
@@ -2217,7 +2217,7 @@ def fast_gyro_cost_func(df_optical_flow, _df_gyro, offset=0):
     gyro_dat_resampled = nearest(df_optical_flow.time)
 
     squared_diff = (gyro_dat_resampled - df_optical_flow.loc[:, 'omega_x':'omega_z'])**2
-    sum_squared_diff = (squared_diff.sum(0) * axes_weight).sum()
+    sum_squared_diff = (squared_diff.sum(0) * np.array(axes_weight)).sum()
     # fig, ax = plt.subplots()
     # ax.plot(df_optical_flow.time, df_optical_flow.omega_z)
     # df_gyro = df_gyro[(df_gyro.time < df_optical_flow.time.iloc[-1]) & (df_gyro.time > df_optical_flow.time.iloc[0])]
@@ -2344,7 +2344,7 @@ def estimate_gyro_offset(
 
     print("Estimated offset: {}".format(rough_offset))
 
-    return rough_offset, 1
+    # return rough_offset, 1
     if debug_plots:
         plt.figure()
         plt.plot(offsets, costs)
@@ -2354,7 +2354,7 @@ def estimate_gyro_offset(
 
     # Find better sync with smaller search space
     dt = 0.2
-    N = int(dt * 5000)
+    N = int(dt * 1000)
     # do_hpf = False
 
     # run both gyro and video through high pass filter
@@ -2371,26 +2371,34 @@ def estimate_gyro_offset(
 
     #plt.plot(gyro_times, gyro_data[:,0])
     #plt.plot(gyro_times, filtered_gyro_data[:,0])
+    df_cost = pd.DataFrame(columns=["offset", "cost"])
 
     for i in range(N):
         offset = dt/2 - i * (dt/N) + rough_offset
         #cost = self.fast_gyro_cost_func(OF_times, OF_transforms, gyro_times + offset, gyro_data)
         # cost = better_gyro_cost_func(df_optical_flow, df_gyro, offset=offset)
         cost = fast_gyro_cost_func(df_optical_flow, df_gyro, offset=offset)
-        offsets.append(offset)
-        costs.append(cost)
+        df_cost = df_cost.append({'offset': offset, 'cost': cost}, ignore_index=True)
+    df_cost['roll'] = df_cost.cost.rolling(30, min_periods=1, center=True).mean()
+    best = df_cost[df_cost.cost == df_cost.cost.min()]
+    better_offset = best.offset.item()
+    cost = best.cost.item()
 
-    better_offset = offsets[np.argmin(costs)]
-    cost = min(costs)
+    print("Better offset: {}, cost: {}".format(better_offset, cost))
+    best = df_cost[df_cost.roll == df_cost.roll.min()]
+    better_offset = best.offset.item()
+    cost = best.cost.item()
 
     print("Better offset: {}, cost: {}".format(better_offset, cost))
 
     if debug_plots:
         plt.figure()
-        plt.plot(offsets, costs)
+        plt.plot(df_cost.offset, df_cost.cost)
+        plt.plot(df_cost.offset, df_cost.cost.rolling(30, min_periods=1, center=True).mean())
+        plt.plot(df_cost.offset, scipy.signal.savgol_filter(df_cost.cost, window_length=31, polyorder=1))
         plt.xlabel("Offset [s]")
         plt.ylabel("Cost")
-        plt.title(f"Syncpoint Offset Estimation\nCosts: {min(costs):.4f}, Offset: {better_offset:.4f}")
+        plt.title(f"Syncpoint Offset Estimation\nCosts: {cost:.4f}, Offset: {better_offset:.4f}")
 
         plt.show()
 
@@ -2422,8 +2430,8 @@ class Sync:
         self.sync_points.sort(key=lambda sp: sp.start_frame)
 
     def new_sync_point(self, start_frame):
-        gyro = self.df_gyro[(self.df_gyro.time > start_frame/self.fps - 0.6*self.rough_sync_search_interval) &
-               (self.df_gyro.time < start_frame/self.fps + 0.6*self.rough_sync_search_interval + self.num_frames / self.fps)]
+        gyro = self.df_gyro[(self.df_gyro.time > start_frame/self.fps - self.rough_sync_search_interval) &
+               (self.df_gyro.time < start_frame/self.fps + self.rough_sync_search_interval + self.num_frames / self.fps)]
 
         return SyncPoint(
             self.video_file,
@@ -2509,7 +2517,7 @@ class SyncPoint:
 
     def plot(self):
         fig, axes = plt.subplots(3, 1, sharex=True)
-        fig.suptitle(f"Syncpoint {self.start_frame}")
+        fig.suptitle(f"Syncpoint Frame Start {self.start_frame}")
         self.plot_ax(axes, 0)
         self.plot_ax(axes, 1)
         self.plot_ax(axes, 2)
