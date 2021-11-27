@@ -2537,7 +2537,7 @@ class SyncPoint:
 
     def plot(self):
         fig, axes = plt.subplots(3, 1, sharex=True)
-        fig.suptitle(f"Syncpoint Start Frame {self.start_frame}")
+        fig.suptitle(f"Syncpoint Start Frame {self.start_frame:.0f}")
         self.plot_ax(axes, 0)
         self.plot_ax(axes, 1)
         self.plot_ax(axes, 2)
