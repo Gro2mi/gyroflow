@@ -12,3 +12,5 @@ sympy
 tqdm
 qdarkstyle
 darkdetect
+ffprobe-python
+telemetry-parser
