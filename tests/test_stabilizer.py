@@ -8,15 +8,15 @@ import subprocess
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import gyrolog
-from stabilizer import MultiStabilizer
+from stabilizer import MultiStabilizer, Sync
 
 
-def create_stab(infile_path):
+def create_stab(infile_path="tests/test_files/videos/gopro6_test.mp4", cam_preset=r"camera_presets\GoPro\GoPro_Hero6_2160p_43.json"):
     log_guess, log_type, variant = gyrolog.guess_log_type_from_video(infile_path)
     if not log_guess:
         print("Can't guess log")
         exit()
-    return MultiStabilizer(infile_path, r"camera_presets\GoPro\GoPro_Hero6_2160p_43.json", log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
+    return MultiStabilizer(infile_path, cam_preset, log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
 
 
 def test_export():
@@ -43,10 +43,27 @@ def test_export():
         print(os.stat(outpath).st_size)
         assert os.stat(outpath).st_size > 10000
 
-def test_recommended_syncpoints():
-    stab = create_stab(infile_path = "GX010117_test-file_for_Grommi.mp4")
+def test_recommended_sync_points():
+    stab = create_stab()
     print(stab.get_recommended_syncpoints(30))
+
+
+def test_add_sync_points():
+    stab = create_stab()
+    sync = Sync(stab, 60)
+    with pytest.raises(TypeError):
+        sync.add_sync_points(4)
+    sync.add_sync_points([4])
+    assert len(sync.sync_points) == 1
+    sync.add_sync_points([1, 7])
+    assert len(sync.sync_points) == 3
+    assert sync.sync_points[0].start_frame == 1
+    assert sync.sync_points[1].start_frame == 4
+    assert sync.sync_points[2].start_frame == 7
+
+
 
 if __name__ == "__main__":
     # test_export()
-    test_recommended_syncpoints()
+    # test_recommended_sync_points()
+    test_add_sync_points()
