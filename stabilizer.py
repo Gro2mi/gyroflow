@@ -29,6 +29,7 @@ from matplotlib import pyplot as plt
 from matplotlib import colors
 from vidgear.gears import WriteGear
 from vidgear.gears import helper as vidgearHelper
+from ffprobe import FFProbe
 import gyrolog
 import json
 import multiprocessing as mp
@@ -290,14 +291,15 @@ class Stabilizer:
         self.sync_costs = []
 
 
-    def multi_sync_add_slice(self, slice_frame_start, slicelength, d1, cost1, times1, transforms1, debug_plots = True):
+    def multi_sync_add_slice(self, slice_frame_start, slicelength, d1, cost1, times1, transforms1, debug_plots = True, remove_bad = True):
+
         max_sync_cost_tot = 10 # > 10 is nogo.
         max_sync_cost = max_sync_cost_tot / 30 * slicelength
-        if cost1 > max_sync_cost:
+        if cost1 > max_sync_cost and remove_bad:
             print("Skipping slice due to large error")
             return cost1
 
-        elif np.sum((np.abs(transforms1 * self.fps) < 0.05)) >= (0.95 * transforms1.size):
+        elif np.sum((np.abs(transforms1 * self.fps) < 0.05)) >= (0.95 * transforms1.size) and remove_bad:
             print("Skipping slice due to lack of movement")
             return cost1
             # if more than 95% of the slice doesn't have significant movement (<3 deg/s)
@@ -419,7 +421,8 @@ class Stabilizer:
                                     chosen_coefs = coefs
                                     num_chosen = within_error.shape[0]
                                     chosen_indices = set(within_error)
-                            elif close_constant: # close to linear
+                            elif close_constant and (type(chosen_coefs) == type(None) or abs(coefs[0]) < abs(chosen_coefs[0])):
+                            	# close to linear or more linear than previous one
                                 chosen_coefs = coefs
                                 num_chosen = within_error.shape[0]
                                 chosen_indices = set(within_error)
@@ -783,7 +786,7 @@ class Stabilizer:
             self.integrator.gyro_sample_rate,
             self.fps,
             analyze_length=analyze_length,
-            debug_plots=True)
+            debug_plots=debug_plots)
 
 
     def estimate_gyro_offset(self, OF_times, OF_transforms, prev_pts_list, curr_pts_list, debug_plots = True):
@@ -1100,7 +1103,7 @@ class Stabilizer:
         quit_button = False
 
         num_not_success = 0
-        num_not_success_lim = 5 # stop after 5 failures to read frame
+        num_not_success_lim = 20 # stop after 5 failures to read frame
 
         old_map_enable_setting = False
         if type(viewer_thread) != type(None) and display_preview:
