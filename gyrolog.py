@@ -17,6 +17,8 @@ from blackbox_extract import BlackboxExtractor
 from GPMF_gyro import Extractor as GPMFExtractor
 from quaternion import quaternion_multiply
 
+import telemetry_parser
+
 
 # Generate 24 different (right handed) orientations using cross products
 def generate_rotmats():
@@ -145,6 +147,8 @@ def generate_uptilt_mat(angle, degrees=False):
                        [0,np.cos(angle),-np.sin(angle)],
                        [0,np.sin(angle),np.cos(angle)]])
     return rotmat
+
+
 
 def show_orientation(rotmat):
     orig_lw = 4
@@ -553,6 +557,45 @@ class GyrologReader:
 
         return True
         
+
+    def filter_spikes(self, data, sample_rate=1000, low_threshold = 0.3, high_threshold = 0.9):
+        # For filtering tricky data with gyro spikes due to mems resonance (?)
+
+        # average with threshold
+        kernel_size = 201 # 0.2 second window
+
+        out_data = np.zeros(data.shape)
+        # Single sample spikes
+        for i in range(1, data.shape[0]-1):
+            if abs(data[i+1] - data[i-1]) < low_threshold and min(abs(data[i] - data[i+1]), abs(data[i] - data[i-1])) > high_threshold:
+                out_data[i] = (data[i+1] + data[i-1])/2
+            else:
+                out_data[i] = data[i]
+
+        offset = int(kernel_size/2)
+        i = offset
+        out_data2 = np.zeros(data.shape)
+
+        while i < out_data.shape[0] - offset:
+            data_slice = data[i - offset:i+offset]
+            neighbour_average = (np.sum(data_slice) - data[i]) / (kernel_size - 1)
+            if abs(out_data[i] - neighbour_average) > high_threshold:
+                median = np.median(data[i - offset:i+offset])
+                filtered_slice = data_slice[np.abs(data_slice - median) < high_threshold]
+                if filtered_slice.shape[0] == 0:
+                    out_data2[i] = 0
+                else:
+                    out_data2[i] = np.mean(filtered_slice) #neighbour_average
+
+            else:
+                out_data2[i] = out_data[i]
+            i+=1
+
+        sosgyro = signal.butter(10, 150, "lowpass", fs=sample_rate, output="sos")
+        out_data2 = signal.sosfiltfilt(sosgyro, out_data2, 0) # Filter along "vertical" time axis
+
+        return out_data2
+
 class BlackboxCSVData(GyrologReader):
     def __init__(self):
         super().__init__("Blackbox CSV file")
@@ -733,7 +776,10 @@ class RuncamData(GyrologReader):
 
         self.variants = {
             "Runcam 5 Orange": [0],
-            "iFlight GOCam GR": [0]
+            "iFlight GOCam GR": [0],
+            "Other": [18],
+            "Other (1000dps)": [18],
+            "Other (1000dps, reversed)": [4]
         }
         self.variant = "Runcam 5 Orange"
 
@@ -762,6 +808,7 @@ class RuncamData(GyrologReader):
         # Runcam 5 Orange
         rc5pattern = re.compile("RC_(\d{4})_.*\..*") # example: RC_0030_210719221659.MP4
         gocampattern = re.compile("IF-RC01_(\d{4})\..*") # example: IF-RC01_0011.MP4
+        genericpattern = re.compile("RC_(\d{4})\..*")
         
         if rc5pattern.match(fname):
             self.variant = "Runcam 5 Orange"
@@ -771,6 +818,10 @@ class RuncamData(GyrologReader):
         elif gocampattern.match(fname):
             self.variant = "iFlight GOCam GR"
             counter = int(gocampattern.match(fname).group(1))
+
+        elif genericpattern.match(fname):
+            self.variant = "Other (1000dps)"
+            counter = int(genericpattern.match(fname).group(1))
 
         else:
             return False
@@ -806,7 +857,10 @@ class RuncamData(GyrologReader):
             for line in lines:
                 splitdata = [float(x) for x in line.split(",")]
                 t = splitdata[0]/1000
-
+                multiplier = (2 if "1000dps" in self.variant else 1)
+                gx = splitdata[1] * gyroscale * multiplier
+                gy = splitdata[2] * gyroscale * multiplier
+                gz = splitdata[3] * gyroscale * multiplier
                 # RC5
                 if self.variant=="Runcam 5 Orange":
                     gx = splitdata[3] * gyroscale
@@ -816,8 +870,10 @@ class RuncamData(GyrologReader):
                     gx = -splitdata[3] * gyroscale
                     gy = -splitdata[1] * gyroscale
                     gz = -splitdata[2] * gyroscale
-                
                 if has_acc:
+                    ax = splitdata[4] * acc_scale
+                    ay = splitdata[5] * acc_scale
+                    az = splitdata[6] * acc_scale
                     if self.variant=="Runcam 5 Orange":
                         ax = -splitdata[4] * acc_scale
                         ay = -splitdata[5] * acc_scale
@@ -838,6 +894,11 @@ class RuncamData(GyrologReader):
                 data_list.append([t, gx, gy, gz])
 
         self.gyro = np.array(data_list)
+
+        # Filter spike glitches
+        if "1000dps" in self.variant:
+            self.gyro[:,2] = self.filter_spikes(self.gyro[:,2], 1000)
+    
         #sosgyro = signal.butter(1, 8, "lowpass", fs=500, output="sos")
 
         #self.gyro[:,1:4] = signal.sosfiltfilt(sosgyro, self.gyro[:,1:4], 0) # Filter along "vertical" time axis
@@ -1022,6 +1083,149 @@ class GPMFLog(GyrologReader):
 
         return True
 
+class ArdupilotLog(GyrologReader):
+    def __init__(self):
+        super().__init__("Ardupilot .bin.csv file")
+        self.filename_pattern = "(?i).*\.bin\.csv"
+        self.angle_setting = 0
+
+        self.variants = {
+            "default": [15],
+        }
+
+        self.variant = "default"
+        self.default_search_size = 10
+
+        self.post_init()
+
+    def check_log_type(self, filename):
+        fname = os.path.split(filename)[-1]
+        if self.filename_matches(fname):
+            # open and check first line
+            with open(filename, "r") as f:
+                firstline = f.readline().strip()
+                if firstline.startswith('GLOBAL_TimeMS,IMU_TimeUS,'):
+                    return True
+
+        return False
+        
+    def guess_log_from_videofile(self, videofile):
+        no_suffix = os.path.splitext(videofile)[0]
+        #path, fname = os.path.split(videofile)
+
+        log_suffixes = [".bin.csv"]
+        log_suffixes += [ex.upper() for ex in log_suffixes]
+        for suffix in log_suffixes:
+            if os.path.isfile(no_suffix + suffix):
+                logpath = no_suffix + suffix
+                #print("Automatically detected gyro log file: {}".format(logpath.split("/")[-1]))
+
+                if self.check_log_type(logpath):
+                    return logpath
+
+        return False
+
+    def extract_log_internal(self, filename):
+        with open(filename) as bblcsv:
+            gyro_index = None
+            acc_index = None
+            max_index = 0
+
+            csv_reader = csv.reader(bblcsv)
+            row = next(csv_reader)
+
+            stripped_row = [field.strip() for field in row]
+
+            t_index = stripped_row.index("IMU_TimeUS")
+
+            gyro_index = stripped_row.index('IMU_GyrX')
+            #print('Using filtered gyro data')
+
+            max_index = gyro_index + 2
+
+            if "IMU_AccX" in stripped_row:
+                acc_index = stripped_row.index("IMU_AccX")
+                max_index = acc_index + 2
+
+
+            data_list = []
+            acc_list = []
+            gyroscale = 1
+            acc_scale = 1/9.80665
+
+            last_t = 0
+            self.max_data_gab = 10
+            for row in csv_reader:
+                t = float(row[t_index])
+                if max_index<len(row) and (((0 < (t - last_t) < 1000000 * self.max_data_gab) or (last_t == 0))) :
+
+                    gx = float(row[gyro_index])
+                    gy = float(row[gyro_index+1])
+                    gz = float(row[gyro_index+2])
+                    last_t = t
+
+                    #data_list.append(f)
+                    data_list.append([t / 1000000, gx, gy, gz])
+                    if acc_index:
+                        ax = float(row[acc_index])
+                        ay = float(row[acc_index+1])
+                        az = float(row[acc_index+2])
+
+                        acc_list.append([t / 1000000, ax, ay, az])
+
+            self.gyro = np.array(data_list)
+            self.gyro[:,1:] *= gyroscale
+
+            if acc_index:
+                self.acc = np.array(acc_list)
+                self.acc[:,1:] *= acc_scale
+
+
+        return True
+
+class TelemetryParserLog(GyrologReader):
+
+    def __init__(self):
+        super().__init__("Telemetry Parser (other log types)")
+        self.filename_pattern = "(?i).*"
+
+        self.variants = {
+            "default": [16],
+        }
+
+        self.variant = "default"
+        self.default_search_size = 10
+
+        self.post_init()
+
+    def check_log_type(self, filename):
+
+        return False
+        
+    def guess_log_from_videofile(self, videofile):
+
+        return False
+
+    def extract_log_internal(self, filename):
+        tp = telemetry_parser.Parser(filename)
+        print('Camera: ', tp.camera)
+        print('Model: ', tp.model)
+        norm_imu = tp.normalized_imu()
+
+        data = np.array([(entry["timestamp"],) + entry["gyro"] + entry["accl"] for entry in norm_imu])
+
+        if len(data) == 0:
+            return False
+
+        data[:,0] /= 1000
+        data[:,1:4] *= 180 / np.pi
+        data[:,4:7] /= 9.80665
+
+        self.gyro = data[:,0:4]
+        self.acc = data[:,[0,4,5,6]]
+
+        return True
+
 class GyroflowGyroLog(GyrologReader):
     def __init__(self):
         super().__init__("Gyroflow IMU log")
@@ -1190,7 +1394,9 @@ log_reader_classes = [GyroflowGyroLog,
                       BlackboxRawData,
                       RuncamData,
                       Insta360Log,
-                      GPMFLog]
+                      GPMFLog,
+                      ArdupilotLog,
+                      TelemetryParserLog]
 log_reader_names = [alg().name for alg in log_reader_classes]
 def print_available_log_types():
     print("Available log types")
@@ -1267,7 +1473,9 @@ def guess_log_type_from_log(logfile, check_data = False):
 
 if __name__ == "__main__":
 
+
     tests = [
+        "D:/Documents/Gyroflow/ardupilot/1 01.01.1970 7-00-00.bin.csv",
         "test_clips/badbbl.bbl",
         "test_clips/Runcam/gyroDate0006.csv"
         "C:/Users/TUDelftSID/Downloads/20210814 gocam/IF-RC01_0010.bbl",
@@ -1282,7 +1490,7 @@ if __name__ == "__main__":
     #reader = RuncamData()
     success, logtype, variant = guess_log_type_from_log(tests[0])
     reader = get_log_reader_by_name(logtype)
-    reader.set_variant(variant)
+    #reader.set_variant("Other (1000dps)")
     reader.extract_log(tests[0])
     reader.plot_gyro()
     plt.show()

@@ -262,6 +262,8 @@ class VideoThread(QtCore.QThread):
         self.stretch_enable = False
         self.horizontal_stretch = 1
 
+        self.seek_frame = -1 # -1 when not seeking
+
     def run(self):
         """
         Run the videoplayer using the thread
@@ -270,6 +272,9 @@ class VideoThread(QtCore.QThread):
         self.cap = cv2.VideoCapture()
         last_timestamp = time.time()
         while True:
+            if self.seek_frame > -1:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.seek_frame)
+                self.seek_frame = -1
             if self.playing or self.next_frame:
                 self.next_frame = False
                 self.this_frame_num = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
@@ -516,11 +521,11 @@ class VideoPlayerWidget(QtWidgets.QWidget):
         #if self.is_seeking:
         #    return
 
-        # prevent video overread using 0.2 sec cooldown
+        # prevent video overread using 1 sec cooldown
         timenow = time.time()
-        if (timenow - self.last_seek_time) < 0.5:
-            return
-
+        #if (timenow - self.last_seek_time) < 0.1:
+        #    print(timenow - self.last_seek_time)
+        #    time.sleep(0.1)
         self.last_seek_time = timenow
 
         was_playing = self.thread.playing
@@ -2620,9 +2625,11 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
             print("Sync not allowed here")
             return False
 
-        d1, cost1, times1, transforms1 = self.stab.optical_flow_comparison(time * self.stab.fps, OF_slice_length,
+        frame_index = int(time * self.stab.fps)
+
+        d1, cost1, times1, transforms1 = self.stab.optical_flow_comparison(frame_index, OF_slice_length,
                                                                       debug_plots=False)
-        self.stab.multi_sync_add_slice(time * self.stab.fps, OF_slice_length, d1, cost1, times1, transforms1, debug_plots = False)
+        self.stab.multi_sync_add_slice(frame_index, OF_slice_length, d1, cost1, times1, transforms1, False, remove_bad = False)
 
         self.multiSyncUI.update_from_stab_data()
 
@@ -2669,8 +2676,10 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
 
         max_fitting_error = self.max_fitting_control.value()
         max_syncs = self.max_sync_control.value()
+
+        # Causes multiple windows when packed to exe:
         success = self.stab.full_auto_sync_parallel(max_fitting_error, max_points=max_syncs, n_frames=OF_slice_length)
-        # success = self.stab.full_auto_sync(max_fitting_error, max_syncs)
+        #success = self.stab.full_auto_sync(max_fitting_error, max_syncs, debug_plots=False)
 
         if not success:
             return
@@ -3247,7 +3256,7 @@ class UserSettings:
         self.audio_export = True
         self.output_dimensions = 0
         self.adaptive_zoom = True
-        self.smoothing_window = 4
+        self.smoothing_window = 40
         self.zoom_factor = 1
         self.video_encoder = 0
         self.encoder_profile = 0
@@ -3289,9 +3298,13 @@ class UserSettings:
 
 
 def switch_to_dark_mode(qapp):
-    if darkdetect.isDark():
-        qapp.setStyleSheet(qdarkstyle.load_stylesheet(pyside=True))
-        stabilizer.dark_mode()
+    try:
+        if darkdetect.isDark():
+            qapp.setStyleSheet(qdarkstyle.load_stylesheet(pyside=True))
+            stabilizer.dark_mode()
+    except:
+        #print("Unable to detect dark mode")
+        pass
 
 
 def set_windows_taskbar_icon():
