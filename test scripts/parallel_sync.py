@@ -22,12 +22,17 @@ if __name__ == "__main__":
     lens_preset = r"S:\Cloud\git\FPV\GoPro_Hero6_2160p_43.json"
     # infile_path = r"D:\Cloud\git\FPV\videos\GH9.MP4"
     # lens_preset = r"D:\Cloud\git\gyroflow\camera_presets\GoPro\GoPro_HERO9_Black_Wide_5K_16by9_Wide.json"
-    log_guess, log_type, variant = gyrolog.guess_log_type_from_video(infile_path)
-    if not log_guess:
-        print("Can't guess log")
-        exit()
-    stab = MultiStabilizer(infile_path, lens_preset, log_guess, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
+    imu_log = infile_path
+    imu_log = r"S:\Cloud\git\FPV\videos\tarsier\00000120.bin.csv"
+    log_guess, log_type, variant = gyrolog.guess_log_type_from_log(imu_log)
+    # if not log_guess:
+    #     print("Can't guess log")
+    #     exit()
+    stab = MultiStabilizer(infile_path, lens_preset, imu_log, gyro_lpf_cutoff = -1, logtype=log_type, logvariant=variant)
+
+    stab.initial_offset = 71
     stab.sync_points = stab.get_recommended_syncpoints(30)
+    stab.rough_sync_search_interval = 1
     start = time.time()
     sync = Sync(stab, 30)
     sync.add_sync_points([15.5 * 30, 18.7 * 30, 25.5 * 30])
