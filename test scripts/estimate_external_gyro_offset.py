@@ -50,6 +50,11 @@ video_file = "video_movement3.csv"
 # gyro_file = "gyro_movement5.csv"
 # video_file = "video_movement5.csv"
 
+video = r"S:\Cloud\git\FPV\videos\tarsier\LOOP0496.MP4"
+gyro = r"S:\Cloud\git\FPV\videos\tarsier\00000120.bin.csv"
+gyro_file = "gyro_movement6.csv"
+video_file = "video_movement6.csv"
+
 pd.set_option('display.max_columns', 10)
 pd.set_option("expand_frame_repr", True)
 cap = cv2.VideoCapture(video)
@@ -68,7 +73,7 @@ frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 fps = round(cap.get(cv2.CAP_PROP_FPS))
 
 ## Aquiring data; must only run once
-guessed_log, logtype, logvariant = gyrolog.guess_log_type_from_video(gyro)
+guessed_log, logtype, logvariant = gyrolog.guess_log_type_from_log(gyro)
 stab = stabilizer.MultiStabilizer(video, cam_preset, gyro, logtype=logtype, logvariant=logvariant)
 df_gyro = stab.gyro_analysis(debug_plots=True)
 df_gyro.to_csv(gyro_file)
