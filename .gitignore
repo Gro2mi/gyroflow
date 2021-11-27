@@ -148,3 +148,14 @@ dmypy.json
 .idea/
 
 user_settings.json
+/media/icon16.png
+/media/icon24.png
+/media/icon32.png
+/media/icon64.png
+/media/icon48.png
+/media/logo_rev0_w400_dark_mode.png
+/GH011172.MP4.gyroflow
+/ffmpeg.exe
+/profile.txt
+/restats
+/test scripts/render_file.py
