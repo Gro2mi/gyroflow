@@ -400,13 +400,13 @@ class GyrologReader:
 
         plt.plot(self.standard_gyro[:,0], self.standard_gyro[:,1])
         plt.ylabel("omega x [rad/s]")
-        plt.grid()
+        plt.grid(True)
 
         plt.subplot(323, sharex=xplot)
 
         plt.plot(self.standard_gyro[:,0], self.standard_gyro[:,2])
         plt.ylabel("omega y [rad/s]")
-        plt.grid()
+        plt.grid(True)
 
         plt.subplot(325, sharex=xplot)
 
@@ -414,7 +414,7 @@ class GyrologReader:
         #plt.plot(self.integrator.get_raw_data("t") + d2, self.integrator.get_raw_data("z"))
         plt.xlabel("time [s]")
         plt.ylabel("omega z [rad/s]")
-        plt.grid()
+        plt.grid(True)
 
         #plt.show(block=blocking)
 
@@ -452,7 +452,7 @@ class GyrologReader:
         f, Pxx_den = signal.welch(y, freq, nperseg=1024)
         plt.plot(f, Pxx_den)
         plt.legend(["x", "y", "z"])
-        plt.grid()
+        plt.grid(True)
         plt.ylabel("Power density")
 
         plt.subplot(224, sharex=xplot)
@@ -476,7 +476,7 @@ class GyrologReader:
         plt.plot(xf, 2.0/N * np.abs(yf[0:N//2]), alpha=alpha)
         plt.legend(["x", "y", "z"])
 
-        plt.grid()
+        plt.grid(True)
         plt.ylabel("FFT")
         plt.xlabel("Frequency [Hz]")
         plt.show(block=blocking)

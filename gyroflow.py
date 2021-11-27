@@ -3291,6 +3291,7 @@ class UserSettings:
 def switch_to_dark_mode(qapp):
     if darkdetect.isDark():
         qapp.setStyleSheet(qdarkstyle.load_stylesheet(pyside=True))
+        stabilizer.dark_mode()
 
 
 def set_windows_taskbar_icon():
@@ -3304,6 +3305,7 @@ def set_windows_taskbar_icon():
 
 def main():
     set_windows_taskbar_icon()
+    stabilizer.light_mode()
     QtCore.QLocale.setDefault(QtCore.QLocale(QtCore.QLocale.English, QtCore.QLocale.UnitedStates))
 
     app = QtWidgets.QApplication([])
