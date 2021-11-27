@@ -2,6 +2,7 @@ import numpy as np
 import quaternion as quat
 import matplotlib.pyplot as plt
 import sys, inspect
+import json
 from scipy import signal
 from scipy.spatial.transform import Rotation
 from PySide2 import QtCore, QtWidgets, QtGui
